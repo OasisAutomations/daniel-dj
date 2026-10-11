@@ -142,6 +142,8 @@ body[data-view=oneA] .decks,body[data-view=oneB] .decks{grid-template-columns:1f
 .avbar{height:12px;background:#0c0e12;border-radius:6px;margin-top:14px;overflow:hidden} .avbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--a),var(--ok))}
 .avbtns{display:flex;gap:10px;margin-top:14px} .avbtns button{flex:1;font-size:20px;padding:16px 0;touch-action:manipulation}
 #avMix{background:#f59e0b;border-color:#f59e0b;color:#1f1300}
+.avbtns{flex-wrap:wrap} #avPause{flex:1 1 100%;font-size:26px;font-weight:800;padding:20px 0;background:#2563eb;border-color:#2563eb;color:#fff}
+body.frozen #avPause{background:var(--ok);border-color:var(--ok);color:#06210f} body.frozen #avProg{background:#64748b}
 /* narrow screens (phones): stack the decks, wrap the toolbars, abbreviate the playlist headers */
 @media (max-width:900px){
   body{min-width:0}
@@ -178,7 +180,7 @@ body[data-view=oneA] .decks,body[data-view=oneB] .decks{grid-template-columns:1f
 <div id="autoview">
   <div class="avcard"><small>NOW PLAYING</small><div class="avt" id="avNow">Nothing playing</div><div class="avm" id="avNowM"></div><div class="avbar"><i id="avProg"></i></div></div>
   <div class="avcard"><small>UP NEXT</small><div class="avt" id="avNext">—</div><div class="avm" id="avNextM"></div>
-    <div class="avbtns"><button id="avAuto">AI AUTOMIX: OFF</button><button id="avMix" title="Mix to the next song now (Quick Mix)">⏭ Mix now</button></div></div>
+    <div class="avbtns"><button id="avPause" title="Pause / resume everything (Space)">❚❚ Pause</button><button id="avAuto">AI AUTOMIX: OFF</button><button id="avMix" title="Mix to the next song now (Quick Mix)">⏭ Mix now</button></div></div>
 </div>
 <div class="decks"><div class="deck" id="deckA"></div><div class="deck" id="deckB"></div></div>
 <div class="mixer"><span id="quickbox"><button id="quick" title="Fast beat-matched mix to the other deck (T)">⚡ QUICK MIX</button><select id="qbars" title="Quick Mix length"><option value="1">1 bar</option><option value="2" selected>2 bars</option><option value="4">4 bars</option></select><button id="qbtn" class="on" title="Quantize: cues, loops and jumps snap to the beat">Q</button><button id="agbtn" class="on" title="Auto-gain: match every song's loudness">Auto-gain</button><span id="qhint"></span></span><b style="color:var(--a)">A</b><input type="range" id="xf" min="-100" max="100" value="0" title="Crossfader (double-click to center)"><b style="color:var(--b)">B</b><span id="rightbox"><button id="rec" title="Record the master output">● REC</button><span id="rectime">0:00</span><a id="recdl" class="btn off" title="Download the recording">⤓</a><button id="recwav" disabled title="Download the recording as a WAV file">WAV</button><canvas id="mmeter" title="Master level"></canvas><b id="clip" title="Lights when the master would clip (the limiter is catching it)">CLIP</b></span></div>
@@ -425,7 +427,7 @@ function audio() {
     for (let c = 0; c < 2; c++) { const d = reverbIR.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
     decks.forEach(d => d.initAudio()); applyXF();
   }
-  if (ctx.state === 'suspended') ctx.resume();
+  if (ctx.state === 'suspended' && !freeze.on) ctx.resume();   // a Pause (freeze) stays paused until Resume
   return ctx;
 }
 const FX_DEFAULTS = { filter: -50, echo: 50, reverb: 50, flanger: 50, brake: 2 };
@@ -687,6 +689,7 @@ class Deck {
   }
   // ---- hand on the record ----
   grab() {
+    if (freeze.on) resumeAll();
     this.takeOver('scratched');
     const was = this.playing, pos = this.pos(), v = was ? this.effRate : 0;
     if (was) this.pause();
@@ -731,8 +734,8 @@ class Deck {
     if (mix.phase === 'mixing') cancelMix(true);
     if (mix.on) { setAutomix(false); status(`Automix off: you ${what} deck ${this.id}.`); }
   }
-  userToggle() { this.takeOver('paused'); this.toggle(); }
-  userCue() { this.takeOver('cued'); this.cue(); }
+  userToggle() { if (freeze.on) return resumeAll(); this.takeOver('paused'); this.toggle(); }   // while everything is paused, a deck's play button just resumes
+  userCue() { if (freeze.on) resumeAll(); this.takeOver('cued'); this.cue(); }
   seek(t) {
     if (!this.buffer) return; const was = this.playing; this.pause(); this.off = clamp(t, 0, this.buffer.duration - 0.01);
     if (this.loop && (this.off < this.loop.start || this.off >= this.loop.end)) this.loop = null;
@@ -1405,6 +1408,7 @@ const autoWindow = d => {
 };
 function automixTick() {
   if (!ctx) return;
+  if (freeze.on) return status(mix.phase === 'mixing' ? 'Paused mid-transition. Press Resume (Space) to carry on.' : 'Paused. Press Resume (Space) to carry on.');   // clock is frozen: nothing to do
   decks.forEach(d => d.glideTick(ctx.currentTime));
   if (mix.phase === 'mixing') return mixingTick(ctx.currentTime);   // runs for Quick Mix even when automix is off
   if (!mix.on) return;
@@ -1526,6 +1530,7 @@ function mixingTick(now) {
 const QUICK_FX = ['echoOut', 'hpOut', 'brakeStop', 'loopRoll'];
 let lastQuick = '', quickBusy = false;
 async function quickMix(forced) {
+  if (freeze.on) resumeAll();
   audio();
   if (quickBusy) return;
   if (mix.phase === 'mixing') return hint('A transition is already running.');
@@ -1652,6 +1657,45 @@ function autoView() {
   else { set('avNext', '—'); set('avNextM', 'Playlist finished'); }
 }
 // ---------- phone helpers: unlock audio on the first tap (iOS), keep the screen awake, PWA when hosted ----------
+// ---------- Pause / Resume everything (automix view, Space, lock screen) ----------
+// Suspending the AudioContext freezes its clock. Every deck, the transition timeline, FX lanes, the tempo glide and
+// scheduled cuts all run on that clock, so they stop exactly where they are and carry on from the same spot on Resume,
+// even mid-transition. Automix stays on (unlike a hand pause on a deck, which hands control back to you).
+const freeze = { on: false };
+function pauseAll() {
+  if (!ctx || freeze.on || !decks.some(d => d.playing)) return;
+  freeze.on = true; document.body.classList.add('frozen'); ctx.suspend();
+  status(mix.phase === 'mixing' ? 'Paused mid-transition. Resume carries on from here.' : 'Paused. Automix ' + (mix.on ? 'stays on.' : 'is off.'));
+  freezeUI();
+}
+function resumeAll() {
+  if (!freeze.on) return; freeze.on = false; document.body.classList.remove('frozen');
+  if (ctx) ctx.resume(); status(mix.on ? 'Resumed. Automix is on.' : 'Resumed.'); freezeUI();
+}
+// Pause button / Space in the automix view: pause, resume, or start automix when nothing is playing
+function pauseToggle() {
+  if (freeze.on) return resumeAll();
+  if (decks.some(d => d.playing)) return pauseAll();
+  audio(); if (!mix.on) setAutomix(true);
+}
+function freezeUI() {
+  const b = document.getElementById('avPause'), playing = decks.some(d => d.playing);
+  const t = freeze.on ? '▶ Resume' : playing ? '❚❚ Pause' : '▶ Start automix';
+  if (b.textContent !== t) b.textContent = t;
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = freeze.on ? 'paused' : playing ? 'playing' : 'none';
+}
+document.getElementById('avPause').onclick = pauseToggle; freezeUI();
+// lock screen / notification / headphone controls (where the browser offers them for Web Audio)
+if ('mediaSession' in navigator) {
+  const ms = navigator.mediaSession, h = (a, f) => { try { ms.setActionHandler(a, f); } catch (e) {} };
+  h('play', () => freeze.on ? resumeAll() : pauseToggle()); h('pause', pauseAll); h('nexttrack', () => quickMix());
+  let lastTitle = '';
+  setInterval(() => {
+    freezeUI();
+    const live = decks.find(d => d.playing && d.item) || decks.find(d => d.playing), title = live ? live.$('.name').textContent : '';
+    if (title !== lastTitle && window.MediaMetadata) { lastTitle = title; ms.metadata = new MediaMetadata({ title: title || 'Daniel DJ', artist: 'Daniel DJ', album: mix.on ? 'AI Automix' : '', artwork: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }, { src: 'icon-512.png', sizes: '512x512', type: 'image/png' }] }); }
+  }, 1000);
+} else setInterval(freezeUI, 1000);
 function unlockAudio() {
   try {
     const c = audio(), s = c.createBufferSource(); s.buffer = c.createBuffer(1, 1, 22050); s.connect(c.destination); s.start(0);
@@ -1682,7 +1726,7 @@ document.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.target.tagName === 'SELECT' || (e.target.tagName === 'INPUT' && e.target.type !== 'range')) return;
   const [A, B] = decks, k = e.key.toLowerCase();
   const acts = {
-    ' ': () => A.userToggle(), enter: () => B.userToggle(), q: () => A.userCue(), p: () => B.userCue(),
+    ' ': () => freeze.on || document.body.dataset.view === 'auto' ? pauseToggle() : A.userToggle(), enter: () => B.userToggle(), q: () => A.userCue(), p: () => B.userCue(),
     s: () => A.sync(), k: () => B.sync(), m: () => setAutomix(!mix.on),
     t: () => quickMix(), arrowleft: () => userXF(+xf.value - 10), arrowright: () => userXF(+xf.value + 10),
     1: () => A.$('.file').click(), 2: () => B.$('.file').click()
