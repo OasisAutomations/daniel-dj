@@ -144,6 +144,17 @@ body[data-view=oneA] .decks,body[data-view=oneB] .decks{grid-template-columns:1f
 #avMix{background:#f59e0b;border-color:#f59e0b;color:#1f1300}
 .avbtns{flex-wrap:wrap} #avPause{flex:1 1 100%;font-size:26px;font-weight:800;padding:20px 0;background:#2563eb;border-color:#2563eb;color:#fff}
 body.frozen #avPause{background:var(--ok);border-color:var(--ok);color:#06210f} body.frozen #avProg{background:#64748b}
+#keylock.na,#avKL.na{opacity:.55}
+/* transitions: one-tap presets (classic view panel + automix view card) */
+.trpanel{margin:0 18px 8px;padding:8px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.trhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px} .trhead b{letter-spacing:1px} .trhead label{color:var(--dim)}
+.trgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px}
+.trchip{display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:2px;padding:6px 9px;min-width:0;touch-action:manipulation}
+.trchip b{font-size:13px} .trchip small{color:var(--dim);font-size:11px;line-height:1.25;white-space:normal}
+.trchip.queued{border-color:var(--ok);box-shadow:inset 0 0 0 1px var(--ok)} .trchip.na{opacity:.45}
+body[data-view=auto] #trpanel{display:none}
+.avtr{grid-column:1/-1} .avtr .trhead{margin:6px 0 8px} .avchips{display:flex;flex-wrap:wrap;gap:8px}
+.avchips .trchip{flex:1 1 150px;padding:10px 12px} .avchips .trchip b{font-size:16px}
 /* narrow screens (phones): stack the decks, wrap the toolbars, abbreviate the playlist headers */
 @media (max-width:900px){
   body{min-width:0}
@@ -173,6 +184,7 @@ body.frozen #avPause{background:var(--ok);border-color:var(--ok);color:#06210f} 
     <option value="custom">Custom</option><option value="house">House / Techno</option><option value="hiphop">Hip-Hop / R&amp;B</option><option value="edm">EDM / Big Room</option><option value="dnb">Drum &amp; Bass</option><option value="pop">Pop / Top 40</option><option value="latin">Latin / Reggaeton</option><option value="chill">Chill / Lo-fi</option></select></label>
   <label>Mix <select id="bars"><option value="2">2 bars</option><option value="4">4 bars</option><option value="8">8 bars</option><option value="16" selected>16 bars</option><option value="32">32 bars</option></select></label>
   <button id="fxauto" class="on" title="Let automix add effects during transitions">Auto FX: ON</button>
+  <button id="keylock" class="on" title="Key lock: tempo changes (slider, automix match, drift lock, glide) keep the song's original pitch. Power-down, backspin and scratching still bend the pitch.">Key lock: ON</button>
   <label>Intensity <select id="intensity"><option value="subtle">Subtle</option><option value="normal" selected>Normal</option><option value="wild">Wild</option></select></label>
   <label>View <select id="view" title="Classic = two decks · Automix = big now / next · One deck = prep a song"><option value="classic">Classic</option><option value="auto">Automix</option><option value="oneA">One deck A</option><option value="oneB">One deck B</option></select></label>
   <span id="fxlabel">Automix: —</span>
@@ -180,10 +192,12 @@ body.frozen #avPause{background:var(--ok);border-color:var(--ok);color:#06210f} 
 <div id="autoview">
   <div class="avcard"><small>NOW PLAYING</small><div class="avt" id="avNow">Nothing playing</div><div class="avm" id="avNowM"></div><div class="avbar"><i id="avProg"></i></div></div>
   <div class="avcard"><small>UP NEXT</small><div class="avt" id="avNext">—</div><div class="avm" id="avNextM"></div>
-    <div class="avbtns"><button id="avPause" title="Pause / resume everything (Space)">❚❚ Pause</button><button id="avAuto">AI AUTOMIX: OFF</button><button id="avMix" title="Mix to the next song now (Quick Mix)">⏭ Mix now</button></div></div>
+    <div class="avbtns"><button id="avPause" title="Pause / resume everything (Space)">❚❚ Pause</button><button id="avAuto">AI AUTOMIX: OFF</button><button id="avMix" title="Mix to the next song now (Quick Mix)">⏭ Mix now</button><button id="avKL" class="on" title="Key lock: tempo changes keep the original pitch">Key lock: ON</button></div></div>
+  <div class="avcard avtr"><small>TRANSITIONS</small><div class="trhead"><label>Next transition <select class="nexttr" title="Queue a transition for automix's next mix"></select></label><span class="trnote"></span></div><div class="avchips" id="avchips"></div></div>
 </div>
 <div class="decks"><div class="deck" id="deckA"></div><div class="deck" id="deckB"></div></div>
 <div class="mixer"><span id="quickbox"><button id="quick" title="Fast beat-matched mix to the other deck (T)">⚡ QUICK MIX</button><select id="qbars" title="Quick Mix length"><option value="1">1 bar</option><option value="2" selected>2 bars</option><option value="4">4 bars</option></select><button id="qbtn" class="on" title="Quantize: cues, loops and jumps snap to the beat">Q</button><button id="agbtn" class="on" title="Auto-gain: match every song's loudness">Auto-gain</button><span id="qhint"></span></span><b style="color:var(--a)">A</b><input type="range" id="xf" min="-100" max="100" value="0" title="Crossfader (double-click to center)"><b style="color:var(--b)">B</b><span id="rightbox"><button id="rec" title="Record the master output">● REC</button><span id="rectime">0:00</span><a id="recdl" class="btn off" title="Download the recording">⤓</a><button id="recwav" disabled title="Download the recording as a WAV file">WAV</button><canvas id="mmeter" title="Master level"></canvas><b id="clip" title="Lights when the master would clip (the limiter is catching it)">CLIP</b></span></div>
+<div class="trpanel" id="trpanel"><div class="trhead"><b>TRANSITIONS</b><label>Next transition <select class="nexttr" title="Queue a transition for automix's next mix (Auto = let automix choose)"></select></label><span class="trnote">Tap one to fire it now: it lands on the next 4-bar line of the playing song.</span></div><div class="trgrid" id="trgrid"></div></div>
 <div class="queue" id="queue">
   <div class="head"><b>Playlist</b><button id="addq">+ Add songs</button><button id="shuffle">Shuffle</button>
     <select id="sort"><option value="">Sort…</option><option value="asc">BPM low → high</option><option value="desc">BPM high → low</option><option value="ramp">Energy ramp</option><option value="peak">Peak &amp; cool down</option><option value="flow">Smooth flow</option><option value="wave">Wave</option><option value="harmonic">Harmonic flow (key)</option><option value="durAsc">Length short → long</option><option value="durDesc">Length long → short</option></select>
@@ -200,6 +214,718 @@ body.frozen #avPause{background:var(--ok);border-color:var(--ok);color:#06210f} 
   </div>
 </div>
 <div class="help">Keys: Space play/pause A · Enter play/pause B · Q / P cue A / B · S / K sync A / B · ← → crossfader · T quick mix · M automix · 1 / 2 load A / B · Platter: hold = stop, drag = scratch, rim = nudge · Pads: tap = set/jump, long-press = clear · Drag IN/OUT flags on the waveform · Drag ⠿ to reorder</div>
+<!-- Key lock time-stretch, runs in an AudioWorklet. SoundTouch JS v0.3.0 (WSOLA) by Olli Parviainen, Ryan Berdeen, Jakub Fiala, Steve 'Cutter' Blades.
+     LGPL-2.1: https://github.com/cutterbl/SoundTouchJS (unmodified classes; full licence text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt) -->
+<script type="text/plain" id="kl-src">
+/*
+ * SoundTouch JS v0.3.0 audio processing library
+ * Copyright (c) Olli Parviainen
+ * Copyright (c) Ryan Berdeen
+ * Copyright (c) Jakub Fiala
+ * Copyright (c) Steve 'Cutter' Blades
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+class FifoSampleBuffer {
+  constructor() {
+    this._vector = new Float32Array();
+    this._position = 0;
+    this._frameCount = 0;
+  }
+  get vector() {
+    return this._vector;
+  }
+  get position() {
+    return this._position;
+  }
+  get startIndex() {
+    return this._position * 2;
+  }
+  get frameCount() {
+    return this._frameCount;
+  }
+  get endIndex() {
+    return (this._position + this._frameCount) * 2;
+  }
+  clear() {
+    this._vector.fill(0);
+    this._position = 0;
+    this._frameCount = 0;
+  }
+  put(numFrames) {
+    this._frameCount += numFrames;
+  }
+  putSamples(samples, position, numFrames = 0) {
+    position = position || 0;
+    const sourceOffset = position * 2;
+    if (!(numFrames >= 0)) {
+      numFrames = (samples.length - sourceOffset) / 2;
+    }
+    const numSamples = numFrames * 2;
+    this.ensureCapacity(numFrames + this._frameCount);
+    const destOffset = this.endIndex;
+    this.vector.set(samples.subarray(sourceOffset, sourceOffset + numSamples), destOffset);
+    this._frameCount += numFrames;
+  }
+  putBuffer(buffer, position, numFrames = 0) {
+    position = position || 0;
+    if (!(numFrames >= 0)) {
+      numFrames = buffer.frameCount - position;
+    }
+    this.putSamples(buffer.vector, buffer.position + position, numFrames);
+  }
+  receive(numFrames) {
+    if (!(numFrames >= 0) || numFrames > this._frameCount) {
+      numFrames = this.frameCount;
+    }
+    this._frameCount -= numFrames;
+    this._position += numFrames;
+  }
+  receiveSamples(output, numFrames = 0) {
+    const numSamples = numFrames * 2;
+    const sourceOffset = this.startIndex;
+    output.set(this._vector.subarray(sourceOffset, sourceOffset + numSamples));
+    this.receive(numFrames);
+  }
+  extract(output, position = 0, numFrames = 0) {
+    const sourceOffset = this.startIndex + position * 2;
+    const numSamples = numFrames * 2;
+    output.set(this._vector.subarray(sourceOffset, sourceOffset + numSamples));
+  }
+  ensureCapacity(numFrames = 0) {
+    const minLength = parseInt(numFrames * 2);
+    if (this._vector.length < minLength) {
+      const newVector = new Float32Array(minLength);
+      newVector.set(this._vector.subarray(this.startIndex, this.endIndex));
+      this._vector = newVector;
+      this._position = 0;
+    } else {
+      this.rewind();
+    }
+  }
+  ensureAdditionalCapacity(numFrames = 0) {
+    this.ensureCapacity(this._frameCount + numFrames);
+  }
+  rewind() {
+    if (this._position > 0) {
+      this._vector.set(this._vector.subarray(this.startIndex, this.endIndex));
+      this._position = 0;
+    }
+  }
+}
+
+class AbstractFifoSamplePipe {
+  constructor(createBuffers) {
+    if (createBuffers) {
+      this._inputBuffer = new FifoSampleBuffer();
+      this._outputBuffer = new FifoSampleBuffer();
+    } else {
+      this._inputBuffer = this._outputBuffer = null;
+    }
+  }
+  get inputBuffer() {
+    return this._inputBuffer;
+  }
+  set inputBuffer(inputBuffer) {
+    this._inputBuffer = inputBuffer;
+  }
+  get outputBuffer() {
+    return this._outputBuffer;
+  }
+  set outputBuffer(outputBuffer) {
+    this._outputBuffer = outputBuffer;
+  }
+  clear() {
+    this._inputBuffer.clear();
+    this._outputBuffer.clear();
+  }
+}
+
+class RateTransposer extends AbstractFifoSamplePipe {
+  constructor(createBuffers) {
+    super(createBuffers);
+    this.reset();
+    this._rate = 1;
+  }
+  set rate(rate) {
+    this._rate = rate;
+  }
+  reset() {
+    this.slopeCount = 0;
+    this.prevSampleL = 0;
+    this.prevSampleR = 0;
+  }
+  clear() {
+    super.clear();
+    this.reset();
+  }
+  clone() {
+    const result = new RateTransposer();
+    result.rate = this._rate;
+    return result;
+  }
+  process() {
+    const numFrames = this._inputBuffer.frameCount;
+    this._outputBuffer.ensureAdditionalCapacity(numFrames / this._rate + 1);
+    const numFramesOutput = this.transpose(numFrames);
+    this._inputBuffer.receive();
+    this._outputBuffer.put(numFramesOutput);
+  }
+  transpose(numFrames = 0) {
+    if (numFrames === 0) {
+      return 0;
+    }
+    const src = this._inputBuffer.vector;
+    const srcOffset = this._inputBuffer.startIndex;
+    const dest = this._outputBuffer.vector;
+    const destOffset = this._outputBuffer.endIndex;
+    let used = 0;
+    let i = 0;
+    while (this.slopeCount < 1.0) {
+      dest[destOffset + 2 * i] = (1.0 - this.slopeCount) * this.prevSampleL + this.slopeCount * src[srcOffset];
+      dest[destOffset + 2 * i + 1] = (1.0 - this.slopeCount) * this.prevSampleR + this.slopeCount * src[srcOffset + 1];
+      i = i + 1;
+      this.slopeCount += this._rate;
+    }
+    this.slopeCount -= 1.0;
+    if (numFrames !== 1) {
+      out: while (true) {
+        while (this.slopeCount > 1.0) {
+          this.slopeCount -= 1.0;
+          used = used + 1;
+          if (used >= numFrames - 1) {
+            break out;
+          }
+        }
+        const srcIndex = srcOffset + 2 * used;
+        dest[destOffset + 2 * i] = (1.0 - this.slopeCount) * src[srcIndex] + this.slopeCount * src[srcIndex + 2];
+        dest[destOffset + 2 * i + 1] = (1.0 - this.slopeCount) * src[srcIndex + 1] + this.slopeCount * src[srcIndex + 3];
+        i = i + 1;
+        this.slopeCount += this._rate;
+      }
+    }
+    this.prevSampleL = src[srcOffset + 2 * numFrames - 2];
+    this.prevSampleR = src[srcOffset + 2 * numFrames - 1];
+    return i;
+  }
+}
+
+class FilterSupport {
+  constructor(pipe) {
+    this._pipe = pipe;
+  }
+  get pipe() {
+    return this._pipe;
+  }
+  get inputBuffer() {
+    return this._pipe.inputBuffer;
+  }
+  get outputBuffer() {
+    return this._pipe.outputBuffer;
+  }
+  fillInputBuffer(
+  ) {
+    throw new Error('fillInputBuffer() not overridden');
+  }
+  fillOutputBuffer(numFrames = 0) {
+    while (this.outputBuffer.frameCount < numFrames) {
+      const numInputFrames = 8192 * 2 - this.inputBuffer.frameCount;
+      this.fillInputBuffer(numInputFrames);
+      if (this.inputBuffer.frameCount < 8192 * 2) {
+        break;
+      }
+      this._pipe.process();
+    }
+  }
+  clear() {
+    this._pipe.clear();
+  }
+}
+
+const noop = function () {
+  return;
+};
+
+class SimpleFilter extends FilterSupport {
+  constructor(sourceSound, pipe, callback = noop) {
+    super(pipe);
+    this.callback = callback;
+    this.sourceSound = sourceSound;
+    this.historyBufferSize = 22050;
+    this._sourcePosition = 0;
+    this.outputBufferPosition = 0;
+    this._position = 0;
+  }
+  get position() {
+    return this._position;
+  }
+  set position(position) {
+    if (position > this._position) {
+      throw new RangeError('New position may not be greater than current position');
+    }
+    const newOutputBufferPosition = this.outputBufferPosition - (this._position - position);
+    if (newOutputBufferPosition < 0) {
+      throw new RangeError('New position falls outside of history buffer');
+    }
+    this.outputBufferPosition = newOutputBufferPosition;
+    this._position = position;
+  }
+  get sourcePosition() {
+    return this._sourcePosition;
+  }
+  set sourcePosition(sourcePosition) {
+    this.clear();
+    this._sourcePosition = sourcePosition;
+  }
+  onEnd() {
+    this.callback();
+  }
+  fillInputBuffer(numFrames = 0) {
+    const samples = new Float32Array(numFrames * 2);
+    const numFramesExtracted = this.sourceSound.extract(samples, numFrames, this._sourcePosition);
+    this._sourcePosition += numFramesExtracted;
+    this.inputBuffer.putSamples(samples, 0, numFramesExtracted);
+  }
+  extract(target, numFrames = 0) {
+    this.fillOutputBuffer(this.outputBufferPosition + numFrames);
+    const numFramesExtracted = Math.min(numFrames, this.outputBuffer.frameCount - this.outputBufferPosition);
+    this.outputBuffer.extract(target, this.outputBufferPosition, numFramesExtracted);
+    const currentFrames = this.outputBufferPosition + numFramesExtracted;
+    this.outputBufferPosition = Math.min(this.historyBufferSize, currentFrames);
+    this.outputBuffer.receive(Math.max(currentFrames - this.historyBufferSize, 0));
+    this._position += numFramesExtracted;
+    return numFramesExtracted;
+  }
+  handleSampleData(event) {
+    this.extract(event.data, 4096);
+  }
+  clear() {
+    super.clear();
+    this.outputBufferPosition = 0;
+  }
+}
+
+const USE_AUTO_SEQUENCE_LEN = 0;
+const DEFAULT_SEQUENCE_MS = USE_AUTO_SEQUENCE_LEN;
+const USE_AUTO_SEEKWINDOW_LEN = 0;
+const DEFAULT_SEEKWINDOW_MS = USE_AUTO_SEEKWINDOW_LEN;
+const DEFAULT_OVERLAP_MS = 8;
+const _SCAN_OFFSETS = [[124, 186, 248, 310, 372, 434, 496, 558, 620, 682, 744, 806, 868, 930, 992, 1054, 1116, 1178, 1240, 1302, 1364, 1426, 1488, 0], [-100, -75, -50, -25, 25, 50, 75, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [-20, -15, -10, -5, 5, 10, 15, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [-4, -3, -2, -1, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]];
+const AUTOSEQ_TEMPO_LOW = 0.25;
+const AUTOSEQ_TEMPO_TOP = 4.0;
+const AUTOSEQ_AT_MIN = 125.0;
+const AUTOSEQ_AT_MAX = 50.0;
+const AUTOSEQ_K = (AUTOSEQ_AT_MAX - AUTOSEQ_AT_MIN) / (AUTOSEQ_TEMPO_TOP - AUTOSEQ_TEMPO_LOW);
+const AUTOSEQ_C = AUTOSEQ_AT_MIN - AUTOSEQ_K * AUTOSEQ_TEMPO_LOW;
+const AUTOSEEK_AT_MIN = 25.0;
+const AUTOSEEK_AT_MAX = 15.0;
+const AUTOSEEK_K = (AUTOSEEK_AT_MAX - AUTOSEEK_AT_MIN) / (AUTOSEQ_TEMPO_TOP - AUTOSEQ_TEMPO_LOW);
+const AUTOSEEK_C = AUTOSEEK_AT_MIN - AUTOSEEK_K * AUTOSEQ_TEMPO_LOW;
+class Stretch extends AbstractFifoSamplePipe {
+  constructor(createBuffers) {
+    super(createBuffers);
+    this._quickSeek = true;
+    this.midBufferDirty = false;
+    this.midBuffer = null;
+    this.overlapLength = 0;
+    this.autoSeqSetting = true;
+    this.autoSeekSetting = true;
+    this._tempo = 1;
+    this.setParameters(44100, DEFAULT_SEQUENCE_MS, DEFAULT_SEEKWINDOW_MS, DEFAULT_OVERLAP_MS);
+  }
+  clear() {
+    super.clear();
+    this.clearMidBuffer();
+  }
+  clearMidBuffer() {
+    this.midBufferDirty = false;
+    this.midBuffer = null;
+    if (this.refMidBuffer) {
+      this.refMidBuffer.fill(0);
+    }
+    this.skipFract = 0;
+  }
+  setParameters(sampleRate, sequenceMs, seekWindowMs, overlapMs) {
+    if (sampleRate > 0) {
+      this.sampleRate = sampleRate;
+    }
+    if (overlapMs > 0) {
+      this.overlapMs = overlapMs;
+    }
+    if (sequenceMs > 0) {
+      this.sequenceMs = sequenceMs;
+      this.autoSeqSetting = false;
+    } else {
+      this.autoSeqSetting = true;
+    }
+    if (seekWindowMs > 0) {
+      this.seekWindowMs = seekWindowMs;
+      this.autoSeekSetting = false;
+    } else {
+      this.autoSeekSetting = true;
+    }
+    this.calculateSequenceParameters();
+    this.calculateOverlapLength(this.overlapMs);
+    this.tempo = this._tempo;
+  }
+  set tempo(newTempo) {
+    let intskip;
+    this._tempo = newTempo;
+    this.calculateSequenceParameters();
+    this.nominalSkip = this._tempo * (this.seekWindowLength - this.overlapLength);
+    this.skipFract = 0;
+    intskip = Math.floor(this.nominalSkip + 0.5);
+    this.sampleReq = Math.max(intskip + this.overlapLength, this.seekWindowLength) + this.seekLength;
+  }
+  get tempo() {
+    return this._tempo;
+  }
+  get inputChunkSize() {
+    return this.sampleReq;
+  }
+  get outputChunkSize() {
+    return this.overlapLength + Math.max(0, this.seekWindowLength - 2 * this.overlapLength);
+  }
+  calculateOverlapLength(overlapInMsec = 0) {
+    let newOvl;
+    newOvl = this.sampleRate * overlapInMsec / 1000;
+    newOvl = newOvl < 16 ? 16 : newOvl;
+    newOvl -= newOvl % 8;
+    this.overlapLength = newOvl;
+    this.refMidBuffer = new Float32Array(this.overlapLength * 2);
+    this.midBuffer = new Float32Array(this.overlapLength * 2);
+  }
+  checkLimits(x, mi, ma) {
+    return x < mi ? mi : x > ma ? ma : x;
+  }
+  calculateSequenceParameters() {
+    let seq;
+    let seek;
+    if (this.autoSeqSetting) {
+      seq = AUTOSEQ_C + AUTOSEQ_K * this._tempo;
+      seq = this.checkLimits(seq, AUTOSEQ_AT_MAX, AUTOSEQ_AT_MIN);
+      this.sequenceMs = Math.floor(seq + 0.5);
+    }
+    if (this.autoSeekSetting) {
+      seek = AUTOSEEK_C + AUTOSEEK_K * this._tempo;
+      seek = this.checkLimits(seek, AUTOSEEK_AT_MAX, AUTOSEEK_AT_MIN);
+      this.seekWindowMs = Math.floor(seek + 0.5);
+    }
+    this.seekWindowLength = Math.floor(this.sampleRate * this.sequenceMs / 1000);
+    this.seekLength = Math.floor(this.sampleRate * this.seekWindowMs / 1000);
+  }
+  set quickSeek(enable) {
+    this._quickSeek = enable;
+  }
+  clone() {
+    const result = new Stretch();
+    result.tempo = this._tempo;
+    result.setParameters(this.sampleRate, this.sequenceMs, this.seekWindowMs, this.overlapMs);
+    return result;
+  }
+  seekBestOverlapPosition() {
+    return this._quickSeek ? this.seekBestOverlapPositionStereoQuick() : this.seekBestOverlapPositionStereo();
+  }
+  seekBestOverlapPositionStereo() {
+    let bestOffset;
+    let bestCorrelation;
+    let correlation;
+    let i = 0;
+    this.preCalculateCorrelationReferenceStereo();
+    bestOffset = 0;
+    bestCorrelation = Number.MIN_VALUE;
+    for (; i < this.seekLength; i = i + 1) {
+      correlation = this.calculateCrossCorrelationStereo(2 * i, this.refMidBuffer);
+      if (correlation > bestCorrelation) {
+        bestCorrelation = correlation;
+        bestOffset = i;
+      }
+    }
+    return bestOffset;
+  }
+  seekBestOverlapPositionStereoQuick() {
+    let bestOffset;
+    let bestCorrelation;
+    let correlation;
+    let scanCount = 0;
+    let correlationOffset;
+    let tempOffset;
+    this.preCalculateCorrelationReferenceStereo();
+    bestCorrelation = Number.MIN_VALUE;
+    bestOffset = 0;
+    correlationOffset = 0;
+    tempOffset = 0;
+    for (; scanCount < 4; scanCount = scanCount + 1) {
+      let j = 0;
+      while (_SCAN_OFFSETS[scanCount][j]) {
+        tempOffset = correlationOffset + _SCAN_OFFSETS[scanCount][j];
+        if (tempOffset >= this.seekLength) {
+          break;
+        }
+        correlation = this.calculateCrossCorrelationStereo(2 * tempOffset, this.refMidBuffer);
+        if (correlation > bestCorrelation) {
+          bestCorrelation = correlation;
+          bestOffset = tempOffset;
+        }
+        j = j + 1;
+      }
+      correlationOffset = bestOffset;
+    }
+    return bestOffset;
+  }
+  preCalculateCorrelationReferenceStereo() {
+    let i = 0;
+    let context;
+    let temp;
+    for (; i < this.overlapLength; i = i + 1) {
+      temp = i * (this.overlapLength - i);
+      context = i * 2;
+      this.refMidBuffer[context] = this.midBuffer[context] * temp;
+      this.refMidBuffer[context + 1] = this.midBuffer[context + 1] * temp;
+    }
+  }
+  calculateCrossCorrelationStereo(mixingPosition, compare) {
+    const mixing = this._inputBuffer.vector;
+    mixingPosition += this._inputBuffer.startIndex;
+    let correlation = 0;
+    let i = 2;
+    const calcLength = 2 * this.overlapLength;
+    let mixingOffset;
+    for (; i < calcLength; i = i + 2) {
+      mixingOffset = i + mixingPosition;
+      correlation += mixing[mixingOffset] * compare[i] + mixing[mixingOffset + 1] * compare[i + 1];
+    }
+    return correlation;
+  }
+  overlap(overlapPosition) {
+    this.overlapStereo(2 * overlapPosition);
+  }
+  overlapStereo(inputPosition) {
+    const input = this._inputBuffer.vector;
+    inputPosition += this._inputBuffer.startIndex;
+    const output = this._outputBuffer.vector;
+    const outputPosition = this._outputBuffer.endIndex;
+    let i = 0;
+    let context;
+    let tempFrame;
+    const frameScale = 1 / this.overlapLength;
+    let fi;
+    let inputOffset;
+    let outputOffset;
+    for (; i < this.overlapLength; i = i + 1) {
+      tempFrame = (this.overlapLength - i) * frameScale;
+      fi = i * frameScale;
+      context = 2 * i;
+      inputOffset = context + inputPosition;
+      outputOffset = context + outputPosition;
+      output[outputOffset + 0] = input[inputOffset + 0] * fi + this.midBuffer[context + 0] * tempFrame;
+      output[outputOffset + 1] = input[inputOffset + 1] * fi + this.midBuffer[context + 1] * tempFrame;
+    }
+  }
+  process() {
+    let offset;
+    let temp;
+    let overlapSkip;
+    if (this.midBuffer === null) {
+      if (this._inputBuffer.frameCount < this.overlapLength) {
+        return;
+      }
+      this.midBuffer = new Float32Array(this.overlapLength * 2);
+      this._inputBuffer.receiveSamples(this.midBuffer, this.overlapLength);
+    }
+    while (this._inputBuffer.frameCount >= this.sampleReq) {
+      offset = this.seekBestOverlapPosition();
+      this._outputBuffer.ensureAdditionalCapacity(this.overlapLength);
+      this.overlap(Math.floor(offset));
+      this._outputBuffer.put(this.overlapLength);
+      temp = this.seekWindowLength - 2 * this.overlapLength;
+      if (temp > 0) {
+        this._outputBuffer.putBuffer(this._inputBuffer, offset + this.overlapLength, temp);
+      }
+      const start = this._inputBuffer.startIndex + 2 * (offset + this.seekWindowLength - this.overlapLength);
+      this.midBuffer.set(this._inputBuffer.vector.subarray(start, start + 2 * this.overlapLength));
+      this.skipFract += this.nominalSkip;
+      overlapSkip = Math.floor(this.skipFract);
+      this.skipFract -= overlapSkip;
+      this._inputBuffer.receive(overlapSkip);
+    }
+  }
+}
+
+const testFloatEqual = function (a, b) {
+  return (a > b ? a - b : b - a) > 1e-10;
+};
+
+class SoundTouch {
+  constructor() {
+    this.transposer = new RateTransposer(false);
+    this.stretch = new Stretch(false);
+    this._inputBuffer = new FifoSampleBuffer();
+    this._intermediateBuffer = new FifoSampleBuffer();
+    this._outputBuffer = new FifoSampleBuffer();
+    this._rate = 0;
+    this._tempo = 0;
+    this.virtualPitch = 1.0;
+    this.virtualRate = 1.0;
+    this.virtualTempo = 1.0;
+    this.calculateEffectiveRateAndTempo();
+  }
+  clear() {
+    this.transposer.clear();
+    this.stretch.clear();
+  }
+  clone() {
+    const result = new SoundTouch();
+    result.rate = this.rate;
+    result.tempo = this.tempo;
+    return result;
+  }
+  get rate() {
+    return this._rate;
+  }
+  set rate(rate) {
+    this.virtualRate = rate;
+    this.calculateEffectiveRateAndTempo();
+  }
+  set rateChange(rateChange) {
+    this._rate = 1.0 + 0.01 * rateChange;
+  }
+  get tempo() {
+    return this._tempo;
+  }
+  set tempo(tempo) {
+    this.virtualTempo = tempo;
+    this.calculateEffectiveRateAndTempo();
+  }
+  set tempoChange(tempoChange) {
+    this.tempo = 1.0 + 0.01 * tempoChange;
+  }
+  set pitch(pitch) {
+    this.virtualPitch = pitch;
+    this.calculateEffectiveRateAndTempo();
+  }
+  set pitchOctaves(pitchOctaves) {
+    this.pitch = Math.exp(0.69314718056 * pitchOctaves);
+    this.calculateEffectiveRateAndTempo();
+  }
+  set pitchSemitones(pitchSemitones) {
+    this.pitchOctaves = pitchSemitones / 12.0;
+  }
+  get inputBuffer() {
+    return this._inputBuffer;
+  }
+  get outputBuffer() {
+    return this._outputBuffer;
+  }
+  calculateEffectiveRateAndTempo() {
+    const previousTempo = this._tempo;
+    const previousRate = this._rate;
+    this._tempo = this.virtualTempo / this.virtualPitch;
+    this._rate = this.virtualRate * this.virtualPitch;
+    if (testFloatEqual(this._tempo, previousTempo)) {
+      this.stretch.tempo = this._tempo;
+    }
+    if (testFloatEqual(this._rate, previousRate)) {
+      this.transposer.rate = this._rate;
+    }
+    if (this._rate > 1.0) {
+      if (this._outputBuffer != this.transposer.outputBuffer) {
+        this.stretch.inputBuffer = this._inputBuffer;
+        this.stretch.outputBuffer = this._intermediateBuffer;
+        this.transposer.inputBuffer = this._intermediateBuffer;
+        this.transposer.outputBuffer = this._outputBuffer;
+      }
+    } else {
+      if (this._outputBuffer != this.stretch.outputBuffer) {
+        this.transposer.inputBuffer = this._inputBuffer;
+        this.transposer.outputBuffer = this._intermediateBuffer;
+        this.stretch.inputBuffer = this._intermediateBuffer;
+        this.stretch.outputBuffer = this._outputBuffer;
+      }
+    }
+  }
+  process() {
+    if (this._rate > 1.0) {
+      this.stretch.process();
+      this.transposer.process();
+    } else {
+      this.transposer.process();
+      this.stretch.process();
+    }
+  }
+}
+
+// ---- Daniel DJ key lock processor (uses the SoundTouch WSOLA classes above) ----
+// Sits at the very end of a deck. Input = the deck already playing at its tempo (so pitch moved with it);
+// output = same audio, pitch moved back by "pitch" (1/rate), delayed by a fixed D frames on every path so both decks stay aligned.
+//  - pitch == 1 (rate 1.0, power-down, backspin): plain ring-buffer delay, no stretching (cheap)
+//  - pitch != 1: SoundTouch pitch shift (time-stretch + resample), primed from the ring so it lines up with the delay path
+//  - direct (hand scratching): zero-latency passthrough
+class KeyLockProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() { return [{ name: 'pitch', defaultValue: 1, minValue: 0.25, maxValue: 4, automationRate: 'k-rate' }]; }
+  constructor(opts) {
+    super();
+    const o = (opts && opts.processorOptions) || {};
+    this.D = o.delay || 4096; this.C = o.calib || 0;   // C: frames the stretch output content runs ahead (measured), dropped when priming
+    this.R = 1 << 15; this.M = this.R - 1; this.L = new Float32Array(this.R); this.Rr = new Float32Array(this.R); this.w = 0;
+    this.st = null; this.p = 1; this.mixv = 0; this.idle = 0; this.direct = false; this.dmix = 0; this.under = 0;
+    this.step = 1 / (0.02 * sampleRate);   // 20 ms crossfades
+    this.inter = new Float32Array(256); this.outI = new Float32Array(256);
+    this.port.onmessage = e => { if (e.data && 'direct' in e.data) this.direct = !!e.data.direct; if (e.data && e.data.stats) this.port.postMessage({ under: this.under, active: !!this.st, direct: this.direct }); };
+  }
+  start(p) {
+    const st = new SoundTouch(); st.stretch.setParameters(sampleRate, 50, 12, 8); st.pitch = p;
+    const PRE = 1024, n = this.D + PRE, buf = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) { const k = (this.w - n + i) & this.M; buf[2 * i] = this.L[k]; buf[2 * i + 1] = this.Rr[k]; }
+    st.inputBuffer.putSamples(buf, 0, n); st.process();
+    const drop = Math.max(0, Math.round(PRE - this.C));
+    st.outputBuffer.receive(Math.min(drop, st.outputBuffer.frameCount));
+    this.st = st; this.p = p;
+  }
+  process(inputs, outputs, params) {
+    const out = outputs[0], N = out[0].length, inp = inputs[0] || [];
+    const iL = inp[0], iR = inp[1] || inp[0], oL = out[0], oR = out[1] || out[0];
+    const p = params.pitch[0], want = Math.abs(p - 1) > 1e-5;
+    if (want && !this.st) this.start(p);   // prime from the ring BEFORE this block is added
+    for (let i = 0; i < N; i++) { const k = (this.w + i) & this.M; this.L[k] = iL ? iL[i] : 0; this.Rr[k] = iR ? iR[i] : 0; }
+    let haveST = false;
+    if (this.st) {
+      if (want && Math.abs(p - this.p) > 1e-6) { this.st.pitch = p; this.p = p; }
+      const I = this.inter; for (let i = 0; i < N; i++) { I[2 * i] = iL ? iL[i] : 0; I[2 * i + 1] = iR ? iR[i] : 0; }
+      this.st.inputBuffer.putSamples(I, 0, N); this.st.process();
+      if (this.st.outputBuffer.frameCount >= N) { this.st.outputBuffer.receiveSamples(this.outI, N); haveST = true; } else this.under++;
+      this.idle = want ? 0 : this.idle + N;
+    }
+    const tgt = want && haveST ? 1 : 0, dtg = this.direct ? 1 : 0;
+    for (let i = 0; i < N; i++) {
+      const k = (this.w + i - this.D) & this.M;
+      if (this.mixv !== tgt) this.mixv = tgt > this.mixv ? Math.min(1, this.mixv + this.step) : Math.max(0, this.mixv - this.step);
+      if (this.dmix !== dtg) this.dmix = dtg > this.dmix ? Math.min(1, this.dmix + this.step * 4) : Math.max(0, this.dmix - this.step * 4);
+      let l = this.L[k], r = this.Rr[k];
+      if (this.mixv > 0 && haveST) { const a = this.mixv; l = l * (1 - a) + this.outI[2 * i] * a; r = r * (1 - a) + this.outI[2 * i + 1] * a; }
+      if (this.dmix > 0) { const a = this.dmix; l = l * (1 - a) + (iL ? iL[i] : 0) * a; r = r * (1 - a) + (iR ? iR[i] : 0) * a; }
+      oL[i] = l; if (oR !== oL) oR[i] = r;
+    }
+    if (this.st && !want && this.mixv === 0 && this.idle > 0.3 * sampleRate) this.st = null;   // back at 1.0x for a while: stop stretching
+    this.w += N;
+    return true;
+  }
+}
+registerProcessor('keylock', KeyLockProcessor);
+</script>
 <script>
 // ---------- BPM detection (energy-onset autocorrelation) ----------
 // BPM-START
@@ -472,7 +1198,7 @@ const SORTS = {
 // SORT-END
 
 // ---------- audio graph ----------
-let ctx = null, master = null, limiter = null, reverbIR = null;
+let ctx = null, master = null, limiter = null, reverbIR = null, fxOut = null;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const fmtDur = s => { s = Math.round(Math.max(0, s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`; };
 const fmt = s => { s = Math.max(0, s); return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0'); };
@@ -489,7 +1215,8 @@ function audio() {
     // generated reverb impulse: 2.8 s of decaying stereo noise
     const len = Math.floor(ctx.sampleRate * 2.8); reverbIR = ctx.createBuffer(2, len, ctx.sampleRate);
     for (let c = 0; c < 2; c++) { const d = reverbIR.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
-    decks.forEach(d => d.initAudio()); applyXF();
+    fxOut = ctx.createDelay(1); fxOut.connect(master);   // synth FX (noise riser) go through the same delay as the key-locked decks
+    decks.forEach(d => d.initAudio()); applyXF(); klSetup();
   }
   if (ctx.state === 'suspended' && !freeze.on) ctx.resume();   // a Pause (freeze) stays paused until Resume
   return ctx;
@@ -710,7 +1437,7 @@ class Deck {
     else if (L) { s.loop = true; s.loopStart = L.start; s.loopEnd = L.end; }
     s.start(when, clamp(this.off, 0, this.buffer.duration));
     this.attachEnd(s);
-    this.src = s; this.t0 = when; this.playing = true;
+    this.src = s; this.t0 = when; this.playing = true; this.klPitch(true);
     if (this.item) this.item.played = true;
   }
   stopSrc() {
@@ -729,7 +1456,7 @@ class Deck {
   setBend(b) {   // rim nudge: temporary speed change that moves the beat without touching the tempo slider
     if (!this.playing || this.brk) { this.bend = 0; return; }
     this.off = this.pos(); this.t0 = Math.max(ctx.currentTime, this.t0); this.bend = b;
-    this.src.playbackRate.setTargetAtTime(this.effRate, ctx.currentTime, 0.015);
+    this.src.playbackRate.setTargetAtTime(this.effRate, ctx.currentTime, 0.015); this.klPitch(false, 0.015);
   }
   // true reverse spin-out: switch to the reversed copy at 3x speed and decelerate to a stop over `len` seconds
   backspin(len, when) {
@@ -740,7 +1467,7 @@ class Deck {
     s.playbackRate.setValueAtTime(r0, when); s.playbackRate.linearRampToValueAtTime(0.05, when + len);
     s.start(when, clamp(this.buffer.duration - p0, 0, this.buffer.duration)); s.stop(when + len);
     this.src.stop(when); this.pre = this.src;       // forward playback ends exactly where the spin starts
-    this.attachEnd(s); this.src = s; this.brk = { t0: when, len, r0: -r0, p0 };
+    this.attachEnd(s); this.src = s; this.brk = { t0: when, len, r0: -r0, p0 }; this.klHold(when);
   }
   // one baby-scratch stroke on this deck: speed up then slow down over d seconds, from song time `at`
   stroke(t, d, dir, at) {
@@ -749,12 +1476,13 @@ class Deck {
     const r = s.playbackRate; r.setValueAtTime(0.05, t); r.linearRampToValueAtTime(1.8, t + d / 2); r.linearRampToValueAtTime(0.05, t + d);
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(1, t + 0.004); g.gain.setValueAtTime(1, t + d - 0.006); g.gain.linearRampToValueAtTime(0, t + d);
     s.start(t, dir > 0 ? at : Math.max(0, this.buffer.duration - (at + travel))); s.stop(t + d + 0.01);
+    if (this.klP && this.klOn) { this.klP.setValueAtTime(1, t); this.klP.setValueAtTime(1 / this.effRate, t + d); }   // strokes are meant to bend the pitch
     return s;
   }
   // ---- hand on the record ----
   grab() {
     if (freeze.on) resumeAll();
-    this.takeOver('scratched');
+    this.takeOver('scratched'); this.klDirect(true);   // hand on the record: no key-lock delay, so scratches follow the hand
     const was = this.playing, pos = this.pos(), v = was ? this.effRate : 0;
     if (was) this.pause();
     this.scr = { was, pos, v, dir: 0, src: null, gain: null, last: performance.now() - 100, swaps: 0 };
@@ -785,7 +1513,7 @@ class Deck {
     this.scrApply();
   }
   release() {
-    const s = this.scr; if (!s) return; this.scr = null;
+    const s = this.scr; if (!s) return; this.scr = null; this.klDirect(false);
     if (s.src) { s.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.003); try { s.src.stop(ctx.currentTime + 0.03); } catch (e) {} }
     this.off = s.pos; if (s.was) this.play();
   }
@@ -872,7 +1600,7 @@ class Deck {
     const p0 = this.lin(when); this.loop = null; this.src.loop = false;
     this.brk = { t0: when, len, r0: this.effRate, p0 };
     const pr = this.src.playbackRate; pr.setValueAtTime(this.effRate, when); pr.linearRampToValueAtTime(0.02, when + len);
-    this.src.stop(when + len);
+    this.src.stop(when + len); this.klHold(when);   // power-down bypasses key lock: the pitch drops like a real tape stop
   }
   setTempo(pct, exact) {   // slider / sync / automix: set the tempo in % (stops any glide); automix uses the exact value so beats don't drift
     pct = clamp(exact ? pct : Math.round(pct * 10) / 10, -8, 8); this.$('.tempo').value = Math.round(pct * 10) / 10;
@@ -881,8 +1609,22 @@ class Deck {
   // change the real playbackRate, re-anchoring the position maths so pos() stays exact
   applyRate(r) {
     if (this.playing && !this.brk && this.src) { this.off = this.pos(); this.t0 = Math.max(ctx.currentTime, this.t0); this.rate = r; this.src.playbackRate.setValueAtTime(this.effRate, ctx.currentTime); }
-    this.rate = r;
+    this.rate = r; if (!this.brk) this.klPitch();
   }
+  // ---- key lock: the deck's worklet moves the pitch back by 1/rate (rate 1.0 = no stretching, just the alignment delay) ----
+  klPitch(reset, tc) {
+    if (!this.klP || !ctx) return; const p = this.klP, t = ctx.currentTime, v = this.klOn && !this.brk ? 1 / this.effRate : 1;
+    if (reset) p.cancelScheduledValues(t);
+    if (tc) p.setTargetAtTime(v, t, tc); else p.setValueAtTime(v, t);
+  }
+  klHold(when) { if (!this.klP) return; const p = this.klP, t = ctx.currentTime; p.cancelScheduledValues(t); p.setValueAtTime(this.klOn ? 1 / this.effRate : 1, t); p.setValueAtTime(1, Math.max(t, when)); }
+  klDirect(on) { if (this.kl) this.kl.port.postMessage({ direct: on }); }
+  initKL() {
+    this.kl = new AudioWorkletNode(ctx, 'keylock', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit', processorOptions: { delay: KL_D, calib: Math.round(KL_CAL * ctx.sampleRate) } });
+    this.klP = this.kl.parameters.get('pitch'); this.klOn = false;
+  }
+  // what you hear lags the deck clock by the key-lock delay; the waveform and platter show what you hear
+  get shownPos() { const p = this.pos(); return this.klOn && this.playing && !this.scr && !this.brk ? Math.max(0, p - klLat() * this.effRate) : p; }
   // after an automix blend: ease back to the song's own tempo (1.0x) over `secs` seconds
   startGlide(secs = 6) {
     if (this.manual || Math.abs(this.rate - 1) < 1e-4) { this.glide = null; return; }
@@ -990,7 +1732,7 @@ class Deck {
     const cv = this.$('canvas'), w = cv.clientWidth * devicePixelRatio, h = cv.clientHeight * devicePixelRatio;
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     const g = cv.getContext('2d'); g.clearRect(0, 0, w, h);
-    const pos = this.buffer ? this.pos() : 0, dur = this.buffer ? this.buffer.duration : 1;
+    const pos = this.buffer ? this.shownPos : 0, dur = this.buffer ? this.buffer.duration : 1;
     const px = pos / dur * w, col = this.id === 'A' ? '#3fa9ff' : '#ff7a3f';
     const X = t => t / dur * w, dpr = devicePixelRatio;
     if (this.peaks && w > 0 && h > 0) {
@@ -1298,7 +2040,30 @@ const RECIPES = {
   hpOut:        { label: 'High-pass sweep out',             deck: 'out', fx: 'filter' },
   lpIn:         { label: 'Low-pass sweep in',               deck: 'in',  fx: 'filter' },
   flangeOut:    { label: 'Flanger out',                     deck: 'out', fx: 'flanger' },
+  // premade "clever" transitions (Transitions panel; the planner uses some of them too)
+  rollBuild:    { label: 'Loop-roll build',     exit: true, cut: true, deck: 'out', fx: 'filter' },
+  echoFreeze:   { label: 'Echo freeze',         exit: true, cut: true, soft: true, deck: 'out', fx: 'echo' },
+  riser:        { label: 'Noise riser',         exit: true, cut: true, deck: 'out', fx: 'filter' },
+  stutter:      { label: 'Stutter cut',         exit: true, cut: true, deck: 'out', fx: 'gate' },
+  tapeDrop:     { label: 'Tape-stop drop',      exit: true, cut: true, deck: 'out', fx: 'brake' },
+  filterSwap:   { label: 'Filter sweep swap',               deck: 'x',   fx: 'filter' },
+  bassDrop:     { label: 'Bass drop swap',      ownBass: true, deck: 'x', fx: 'eq' },
+  doubleDrop:   { label: 'Double drop',         double: true, deck: 'x', fx: 'eq' },
 };
+// one-tap presets: type drop = new song lands on the 1 · exit = old song rings out · blend = beat-matched · double = both drops together
+const PRESETS = [
+  { id: 'rollBuild',    name: 'Loop-roll build',   bars: 4,  type: 'drop',   desc: 'Loops 1 bar → ½ → ¼ → ⅛ with a rising high-pass, new song drops on the 1' },
+  { id: 'echoFreeze',   name: 'Echo freeze',       bars: 4,  type: 'drop',   desc: 'Throws the last beat into a long echo, cuts the dry sound, new song in on the 1' },
+  { id: 'filterSwap',   name: 'Filter sweep swap', bars: 16, type: 'blend',  desc: 'Low-pass closes on the old song while a high-pass opens the new one' },
+  { id: 'riser',        name: 'Noise riser',       bars: 9,  type: 'drop',   desc: 'White-noise sweep builds for 8 bars, then the new song drops on the 1' },
+  { id: 'stutter',      name: 'Stutter cut',       bars: 2,  type: 'drop',   desc: 'Gates the old song in 1/8s then 1/16s for a bar, then cuts on the 1' },
+  { id: 'reverbWash',   name: 'Reverb wash',       bars: 4,  type: 'exit',   desc: 'Old song washes out in reverb while the new one comes in dry' },
+  { id: 'spinbackDrop', name: 'Spinback drop',     bars: 2,  type: 'drop',   desc: 'Spins the old record back, new song drops on the 1' },
+  { id: 'bassDrop',     name: 'Bass drop swap',    bars: 8,  type: 'blend',  desc: 'Blend, kill all bass for one bar, then slam the new bass in on the 1' },
+  { id: 'tapeDrop',     name: 'Tape-stop drop',    bars: 2,  type: 'drop',   desc: 'Old song winds down like a tape stop, new song drops on the 1' },
+  { id: 'doubleDrop',   name: 'Double drop',       bars: 8,  type: 'double', desc: 'Both drops play together for 8 bars (needs close BPM and key)' },
+];
+const PRESET_BY = Object.fromEntries(PRESETS.map(x => [x.id, x]));
 // Genre presets: mix length, weighted move pool, Quick Mix set, intensity, EQ swap style, echo timing
 const GENRES = {
   custom: { label: 'Custom', swap: 'swap', pool: { echoOut: 1, reverbWash: 1, brakeStop: 1, loopRoll: 1, hpOut: 1, lpIn: 1, flangeOut: 1, backspin: 1, spinbackDrop: 1, scratchIn: 1, chop: 1 }, quick: ['echoOut', 'hpOut', 'brakeStop', 'loopRoll'] },
@@ -1328,7 +2093,7 @@ function weightedPick(keys, w) {
   return keys[keys.length - 1];
 }
 // exit moves need 4+ bars (they ring out for 2), cut moves need 2+ bars (they land on the last downbeat)
-const allowed = (k, bars) => { const r = RECIPES[k]; return r.cut ? bars >= 2 : !(r.exit && bars < 4); };
+const allowed = (k, bars) => { const r = RECIPES[k]; return r.cut ? bars >= (k === 'rollBuild' || k === 'riser' ? 3 : 2) : r.double ? bars >= 8 : r.ownBass ? bars >= 4 : !(r.exit && bars < 4); };
 const clash = (k, j) => { const a = RECIPES[k], b = RECIPES[j]; return j === k || (a.exit && b.exit) || (a.deck === b.deck && a.fx === b.fx) || (a.cut && j === 'lpIn') || (b.cut && k === 'lpIn'); };
 let lastRecipes = [];
 // need.exit: the outgoing song is cut short, so hide the cut with an exit move
@@ -1409,6 +2174,60 @@ function planFX(out, inc, picks, T0, dur, bar, beat, from, to, tail = 2 * bar, i
       lane(out, 'echo', ta, tx - 0.25, 0, 55 * k); lane(out, 'filter', ta, tx - 0.1, 0, 45 * k);
       exitAt(out.echoSend.gain, 0.02);
     }
+    if (p === 'rollBuild') {
+      // 2 bars before the drop: loop 1 bar, then ½ bar, ¼ bar, ⅛ bar (each stage starts on the loop start, so the grid holds), rising high-pass
+      const span = Math.min(8, Math.pow(2, Math.floor(Math.log2(Math.max(2, Math.round((tx - T0) / beat)))))), ta = tx - span * beat;
+      const a = out.pos() + (ta - ctx.currentTime) * out.effRate, B = beat * out.effRate;
+      const st = [[0, span / 2], [span / 2, span / 4], [span * 3 / 4, span / 8], [span * 7 / 8, span / 16]];
+      st.forEach(([at, len], i) => plan.events.push({ t: i ? ta + at * beat + 0.01 : Math.max(ctx.currentTime, ta - 0.2), maxLate: len * beat * 0.9,
+        fn: () => { const s = out.src; if (!s || out.brk) return; if (!i) { s.loopStart = a; s.loop = true; out.rolling = true; } s.loopEnd = a + len * B; } }));
+      lane(out, 'filter', ta, tx - 0.05, 0, 70 * k); lane(out, 'echo', tx - 2 * beat, tx - 0.1, 0, 40 * k);
+      exitAt(out.echoSend.gain, 0.01); xCuts([[tx, to]]);
+    }
+    if (p === 'echoFreeze') {
+      // last beat: echo send wide open with high feedback, then the dry signal is cut on the 1 and the echo keeps ringing
+      plan.events.push({ t: tx - beat - 0.25, fn: () => { const t1 = tx - beat; out.echoSend.gain.cancelScheduledValues(ctx.currentTime); out.echoSend.gain.setValueAtTime(out.echoSend.gain.value, t1 - 0.01); out.echoSend.gain.linearRampToValueAtTime(0.9, t1); out.echoFb.gain.setValueAtTime(0.8, t1); } });
+      exitAt(out.echoSend.gain, 0.005);
+      const steps = [[tx, 0]]; for (let i = 1; i <= 16; i++) steps.push([tx + i * (T1 - tx) / 16 - 0.01, to * i / 16]);   // new song in at the centre, fades up over the echo tail
+      xCuts(steps); plan.xkeys = [[T0, from], [tx - 0.005, from], [tx, 0], [T1, to]];
+    }
+    if (p === 'riser') {
+      // synthesized white noise through a rising high-pass, building over up to 8 bars, cut dead on the drop
+      const nb = clamp(Math.floor((tx - T0) / bar + 1e-6), 2, 8), tr = tx - nb * bar;
+      plan.events.push({ t: tr - 0.3, fn: () => {
+        const src = ctx.createBufferSource(), hp = ctx.createBiquadFilter(), g = ctx.createGain();
+        src.buffer = noiseBuf(); src.loop = true; hp.type = 'highpass'; hp.Q.value = 4;
+        hp.frequency.setValueAtTime(300, tr); hp.frequency.exponentialRampToValueAtTime(9000, tx);
+        g.gain.setValueAtTime(0.0001, tr); g.gain.exponentialRampToValueAtTime(0.32 * k, tx - 0.01); g.gain.linearRampToValueAtTime(0, tx + 0.004);
+        src.connect(hp); hp.connect(g); g.connect(fxOut); src.start(tr); src.stop(tx + 0.03);
+        fxLive.n++; src.onended = () => { fxLive.n--; src.disconnect(); g.disconnect(); };
+        plan.extra.push(src);
+      } });
+      lane(out, 'filter', tr, tx - 0.05, 0, 60 * k); exitAt(out.revSend.gain, 0.004); xCuts([[tx, to]]);
+    }
+    if (p === 'stutter') {
+      // last bar: dry signal gated in 1/8 notes, then 1/16 notes, then cut on the 1
+      const ta = tx - bar;
+      plan.events.push({ t: ta - 0.3, fn: () => {
+        const g = out.dry.gain; g.cancelScheduledValues(ctx.currentTime); g.setValueAtTime(1, ta);
+        for (const [t0, t1, per] of [[ta, ta + bar / 2, beat / 2], [ta + bar / 2, tx, beat / 4]])
+          for (let t = t0; t < t1 - 1e-6; t += per) { g.setValueAtTime(1, t + per / 2 - 0.002); g.linearRampToValueAtTime(0, t + per / 2); g.setValueAtTime(0, t + per - 0.002); g.linearRampToValueAtTime(t + per >= tx - 1e-6 ? 0 : 1, t + per); }
+      } });
+      exitAt(out.echoSend.gain, 0.003); xCuts([[tx, to]]);
+    }
+    if (p === 'tapeDrop') { const len = 2 * beat; plan.events.push({ t: tx - len - 0.15, fn: () => out.brake(len, tx - len) }); xCuts([[tx, to]]); }
+    if (p === 'filterSwap') { lane(out, 'filter', T0, T1 - 0.1, 0, -88 * k); lane(inc, 'filter', T0, T0 + dur * 0.75, 72 * k, 0); }
+    if (p === 'bassDrop') {
+      // both basses off for the last bar, then the new bass slams in on the 1
+      plan.events.push({ t: T1 - bar - 0.25, fn: () => out.lowAt(-40, T1 - bar, 0.01) });
+      plan.events.push({ t: T1 - bar + 0.02, fn: () => out.eqUI('low', -40) });
+      plan.events.push({ t: T1 - 0.25, fn: () => inc.lowAt(0, T1, 0.004) });
+      plan.bassDrop = T1 - bar;
+    }
+    if (p === 'doubleDrop') {
+      // the new song starts right on its drop; both play full (one bass: swap halfway), then the old one fades out over the last 2 bars
+      plan.xkeys = [[T0, from], [T0 + 0.02, 0], [T1 - 2 * bar, 0], [T1, to]];
+    }
     if (p === 'hpOut') lane(out, 'filter', T0 + dur * 0.2, mid, 0, 75 * k);
     if (p === 'lpIn') lane(inc, 'filter', T0, mid, -85 * k, 0);
     if (p === 'flangeOut') lane(out, 'flanger', T0 + dur * 0.25, T0 + dur * 0.7, 0, 70 * k);
@@ -1416,6 +2235,9 @@ function planFX(out, inc, picks, T0, dur, bar, beat, from, to, tail = 2 * bar, i
   plan.tx = tx;
   return plan;
 }
+const fxLive = { n: 0 };   // synth FX sources still running (riser)
+let _noise = null;
+const noiseBuf = () => { if (!_noise || _noise.sampleRate !== ctx.sampleRate) { const n = ctx.sampleRate * 2; _noise = ctx.createBuffer(2, n, ctx.sampleRate); for (let c = 0; c < 2; c++) { const d = _noise.getChannelData(c); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1; } } return _noise; };
 function runPlan(plan, now) {
   for (const l of plan.lanes) if (now >= l.t0) {
     const v = Math.round(l.a + (l.b - l.a) * clamp((now - l.t0) / Math.max(0.01, l.t1 - l.t0), 0, 1));
@@ -1429,6 +2251,43 @@ const keyAt = (keys, t) => {
   return keys[keys.length - 1][1];
 };
 const fxLabel = document.getElementById('fxlabel');
+// ---------- key lock (SoundTouch WSOLA in an AudioWorklet, one per deck, at the very end of the deck chain) ----------
+// Everything that is scheduled (crossfader cuts, bass swap, FX) happens before the worklet, and both decks pass through
+// one with the same fixed delay, so beat alignment and the sample-exact swaps are unchanged; the whole mix is just ~90 ms later.
+const KL_D = 4096, KL_CAL = 0.005;   // delay (frames) and measured average lead of the WSOLA output (s)
+const klLat = () => ctx ? KL_D / ctx.sampleRate : 0;
+const keyLock = { on: store.get('ddj-keylock', true), ready: false, failed: '' };
+function klSetup() {
+  if (!ctx.audioWorklet || !window.AudioWorkletNode) { keyLock.failed = 'Key lock needs AudioWorklet, which this browser lacks: tempo changes move the pitch.'; return klUI(); }
+  const url = URL.createObjectURL(new Blob([document.getElementById('kl-src').textContent], { type: 'application/javascript' }));
+  ctx.audioWorklet.addModule(url).then(() => { decks.forEach(d => d.initKL()); keyLock.ready = true; klRoute(); klUI(); })
+    .catch(e => { keyLock.failed = 'Key lock could not start here (' + e.message + '): tempo changes move the pitch.'; klUI(); });
+}
+function klRoute() {
+  const want = keyLock.on && keyLock.ready;
+  decks.forEach(d => {
+    if (!d.kl || d.klOn === want) return;
+    d.xgain.disconnect();
+    if (want) { d.xgain.connect(d.kl); d.kl.connect(master); } else { d.kl.disconnect(); d.xgain.connect(master); }
+    d.klOn = want; if (!d.brk) d.klPitch(true);
+  });
+  if (fxOut) fxOut.delayTime.value = want ? klLat() : 0;
+}
+function setKeyLock(on) {
+  keyLock.on = on; store.set('ddj-keylock', on);
+  const go = () => { klRoute(); klUI(); };
+  // switching while music plays: dip the master for a moment so the ~90 ms jump isn't a click
+  if (ctx && keyLock.ready && decks.some(d => d.playing) && !freeze.on) { const g = master.gain; g.setTargetAtTime(0, ctx.currentTime, 0.008); setTimeout(() => { go(); g.setTargetAtTime(0.8, ctx.currentTime, 0.02); }, 60); }
+  else go();
+}
+function klUI() {
+  for (const id of ['keylock', 'avKL']) {
+    const b = document.getElementById(id), na = !!keyLock.failed;
+    b.textContent = 'Key lock: ' + (na ? 'N/A' : keyLock.on ? 'ON' : 'OFF'); b.classList.toggle('on', keyLock.on && !na); b.classList.toggle('na', na);
+    if (na) b.title = keyLock.failed;
+  }
+}
+['keylock', 'avKL'].forEach(id => document.getElementById(id).onclick = () => { if (keyLock.failed) return hint(keyLock.failed); setKeyLock(!keyLock.on); });
 function endFX(cancelled) {  // put both decks' effects back exactly as they were before the transition
   const { out, in: inc, snapOut, snapIn } = mix;
   // a cancelled brake or loop roll jumps back to where the song would be now
@@ -1513,16 +2372,27 @@ function automixTick() {
     if (want && want !== inc.item && lead > 8) { mix.phase = 'idle'; return; }   // playlist was reordered: load the new next song
     status(`Automix: next up "${inc.$('.name').textContent}" in ${fmt(lead)} · ${planLabel(P, [])}`);
     if (lead > 1 && !P.late) return;
+    const q = presetQ.id;
+    if (q) {   // a queued preset replaces the automatic choice (it still ends on the planned phrase line)
+      let R = presetPlan(out, inc, q, P.endPt, P.rise);
+      if (R.T0track < pos + 0.15 * out.rate) R = presetPlan(out, inc, q, null, P.rise);
+      const lq = (R.T0track - pos) / out.rate;
+      status(`Automix: next up "${inc.$('.name').textContent}" in ${fmt(lq)} · queued ${R.label}`);
+      if (lq > 1) return;
+      setQueued('');
+      return beginMix(out, inc, R.T0track, R.L, R.picks, { vibe: !!mix.vibe, incStart: R.incStart, rise: R.rise, label: R.label, preset: R.id, plan: { ...P, kind: 'preset' } });
+    }
     const picks = planPicks(P), bar = barOf(out);
+    if (picks.includes('doubleDrop')) { const R = presetPlan(out, inc, 'doubleDrop', P.endPt, P.rise); if (R.id === 'doubleDrop') return beginMix(out, inc, R.T0track, R.L, R.picks, { incStart: R.incStart, rise: R.rise, label: R.label + ' · ' + P.why, plan: P }); }
     // exit moves cut the song AT the phrase boundary and ring out for 2 more bars
     const T0track = P.T0plain + tailFor(picks, bar, P.L * bar, false);
     beginMix(out, inc, T0track, P.L, picks, { vibe: P.kind === 'vibe', incStart: P.incStart, rise: P.rise, label: planLabel(P, picks), plan: P });
   }
 }
 // vibe change (after a crate switch): Power-down, Echo out or Cut on the 1, never a long beat-matched blend
-const VIBE = ['brakeStop', 'echoOut', 'slamCut'];
+const VIBE = ['brakeStop', 'echoOut', 'slamCut', 'tapeDrop', 'echoFreeze'];
 function vibePicks(bars, quick) {
-  let set = quick ? [...VIBE] : VIBE.filter(k => allowed(k, bars));
+  let set = quick ? VIBE.filter(k => !RECIPES[k].soft) : VIBE.filter(k => allowed(k, bars));
   if (set.length > 1) set = set.filter(k => k !== mix.lastVibe) ;
   if (!set.length) return [];
   const k = pickOne(set); mix.lastVibe = k; lastRecipes = [k]; return [k];
@@ -1575,7 +2445,7 @@ function planAuto(out, inc, pos, vibe) {
   if (L < (late ? 1 : 4) && kind === 'blend') kind = 'busy';
   const T0 = endPt - L * bar;   // shorter moves still finish on the same phrase boundary
   return { kind, why, L, endPt, T0plain: T0, incStart: kind === 'blend' || kind === 'busy' ? (fixed != null ? fixed : Math.max(inc.beat0, rise - L * m * ib)) : null, rise: fixed != null ? fixed : rise,
-    fit, outE, incE, outV, incV, riseE, late, phraseStart: Math.abs(((bi(T0) - q) % 8 + 8) % 8) < 1e-3 };
+    fit, outE, incE, outV, incV, riseE, late, keyD: keyDist(out.info && out.info.key && out.info.key.camelot, inc.info && inc.info.key && inc.info.key.camelot), phraseStart: Math.abs(((bi(T0) - q) % 8 + 8) % 8) < 1e-3 };
 }
 // pick the moves for a plan (random only for variety among equally good options)
 function planPicks(P) {
@@ -1584,13 +2454,15 @@ function planPicks(P) {
   if (!fxAuto.on) return [];
   if (P.kind === 'gap') {
     // tempos too far apart: no blend. Land the next song on the 1 if it starts with energy, power down a busy song, else echo out
-    const pref = P.riseE >= BUSY ? ['slamCut', 'echoOut', 'brakeStop'] : P.outE >= BUSY ? ['brakeStop', 'echoOut', 'slamCut'] : ['echoOut', 'brakeStop', 'slamCut'];
+    const pref = P.riseE >= BUSY ? ['slamCut', 'rollBuild', 'echoFreeze', 'brakeStop'] : P.outE >= BUSY ? ['brakeStop', 'tapeDrop', 'echoOut', 'slamCut'] : ['echoOut', 'echoFreeze', 'brakeStop', 'slamCut'];
     const k = pref.filter(k => allowed(k, L)).find(no) || pref.find(k => allowed(k, L)); lastRecipes = k ? [k] : []; return k ? [k] : [];
   }
   if (P.kind === 'cutstyle') return pickRecipes(L, intensity, { exit: true });
+  // two busy (not vocal) sections in compatible keys: drop them together instead of avoiding the overlap
+  if (P.kind === 'busy' && L >= 8 && intensity !== 'subtle' && P.keyD <= 1 && !(P.outV >= VOCAL && P.incV >= VOCAL) && no('doubleDrop')) { lastRecipes = ['doubleDrop']; return ['doubleDrop']; }
   if (P.kind === 'busy') { const k = L >= 8 ? 'hpOut' : allowed('echoOut', L) ? 'echoOut' : 'slamCut'; lastRecipes = [k]; return allowed(k, L) ? [k] : []; }
   // good conditions: a clean EQ blend, sometimes with one gentle sweep from the genre's moves
-  const pool = genre().pool, deco = ['hpOut', 'lpIn', 'flangeOut'].filter(k => pool[k] > 0 && no(k));
+  const pool = genre().pool, deco = ['hpOut', 'lpIn', 'flangeOut'].filter(k => pool[k] > 0 && no(k)).concat(['filterSwap', 'bassDrop'].filter(k => no(k) && allowed(k, L) && genre().swap !== 'none'));
   if (intensity !== 'subtle' && deco.length && Math.random() < (intensity === 'wild' ? 0.8 : 0.4)) { const k = weightedPick(deco, pool); lastRecipes = [k]; return [k]; }
   lastRecipes = []; return [];
 }
@@ -1641,14 +2513,16 @@ function beginMix(out, inc, T0track, mixBars, picks, opts = {}) {
   Object.assign(mix, { out, in: inc, snapOut: out.snapshotFX(), snapIn: inc.snapshotFX(), quick: !!opts.quick });
   const cut = picks.some(p => RECIPES[p].cut), tx = when + mixDur - tail;
   // cut moves: the incoming song starts right on the drop (chop: one bar earlier, for the chops)
+  const dbl = picks.some(p => RECIPES[p].double), own = picks.some(p => RECIPES[p].ownBass);
   const incWhen = !cut ? when : picks.includes('chop') ? tx - barR : tx;
   // incoming start: given by the planner, else back from its energy rise so the rise lands on the exit point (whole bars of its own grid)
   let incStart = opts.incStart;
   if (incStart == null && opts.rise != null) { const ib = barOf(inc), d = (tx - incWhen) * inc.effRate; incStart = Math.max(inc.beat0, opts.rise - Math.ceil(d / ib - 1e-6) * ib); }
   if (incStart == null) incStart = inc.window ? inc.window.start : inc.beat0;
   // bass swap: the incoming bass stays cut, then both basses swap on the downbeat at the middle of the blend (one bass at a time)
-  mix.swap = cut ? 'none' : genre().swap === 'none' ? 'none' : genre().swap;
-  if (mix.swap !== 'none') {
+  mix.swap = cut ? 'none' : (dbl || own) ? 'swap' : genre().swap === 'none' ? 'none' : genre().swap;
+  if (own) { inc.setEQ('low', -40, 0.005); mix.swapAt = null; }   // bass drop swap: its own bass moves (see planFX)
+  else if (mix.swap !== 'none') {
     inc.setEQ('low', -40, 0.005);
     const half = Math.max(1, Math.round(mixBars / 2)), swapAt = Math.min(when + half * barR, tx), ramp = mix.swap === 'fast' ? 0.006 : 0.02;
     mix.swapAt = swapAt; mix.swapRamp = ramp;
@@ -1664,6 +2538,7 @@ function beginMix(out, inc, T0track, mixBars, picks, opts = {}) {
     exitFromWindowStart: win ? (exitTrack - win.start) / bar : null, outroBar: out.info && out.info.outro != null ? (out.info.outro - out.beat0) / bar : null, incStartBar: (incStart - inc.beat0) / (240 / (inc.bpm || 120)), mixBars, shortened: !!win, quick: !!opts.quick,
     kind: opts.plan ? opts.plan.kind : opts.quick ? 'quick' : '', label: opts.label || '', plan: opts.plan || null, swapAt: mix.swapAt, incStart, rise: opts.rise ?? null, lock: mix.lock, matched, T0track, outQ: out.info ? out.info.phraseBar0 || 0 : 0 };
   if (opts.vibe) mix.vibe = false; mix.last.vibe = !!opts.vibe;
+  mix.last.preset = opts.preset || null;
   fxLabel.textContent = opts.label ? opts.label + (win ? ' · short cut' : '') : (opts.vibe ? 'Vibe change: ' : opts.quick ? 'Quick Mix: ' : 'Automix: ') + (picks.length ? picks.map(p => RECIPES[p].label).join(' + ') : (fxAuto.on ? 'none' : 'off')) + (win ? ' · short cut' : '');
   Object.assign(mix, { phase: 'mixing', start: when, dur: mixDur, swapped: false, plan });
 }
@@ -1682,6 +2557,69 @@ function mixingTick(now) {
     inc.startGlide(6);   // blend done: ease the live song back to its own tempo (skipped if you set its tempo)
     if (!mix.on) status(`Quick Mix done. Deck ${inc.id} is live.`);
   }
+}
+// ---------- premade transitions: fire now (Transitions panel / automix view) or queue for automix's next mix ----------
+const presetQ = { id: store.get('ddj-next-tr', '') };
+if (!PRESET_BY[presetQ.id]) presetQ.id = '';
+const riseOf = inc => inc.window ? inc.window.start : inc.cues[0] != null ? inc.cues[0] : inc.info && inc.info.intro != null ? inc.info.intro : inc.beat0;
+// where and how a preset runs. end = song time (outgoing) of the 1 it lands on: the drop for drop/exit moves, the blend end for blends.
+// end null = the next 4-bar line of the outgoing song that leaves enough room
+function presetPlan(out, inc, id, end, rise) {
+  const fit = tempoFit(out, inc), kd = keyDist(out.info && out.info.key && out.info.key.camelot, inc.info && inc.info.key && inc.info.key.camelot);
+  let use = id, note = '';
+  const pr0 = PRESET_BY[id];
+  if ((pr0.type === 'blend' || pr0.type === 'double') && !fit.ok) { use = 'echoFreeze'; note = ` (BPMs too far apart for ${pr0.name})`; }
+  else if (pr0.type === 'double' && kd > 1) { use = 'filterSwap'; note = ' (keys clash for a double drop)'; }
+  const pr = PRESET_BY[use], bar = barOf(out), q = (out.info && out.info.phraseBar0) || 0, picks = [use], pos = out.pos();
+  let L = pr.bars; const tailB = tailFor(picks, 1, L, false);
+  if (end == null) {
+    const g = 4 * bar, base = out.beat0 + (q % 4) * bar, need = pos + 0.3 * out.rate + (L - tailB) * bar;
+    end = base + Math.ceil((need - base) / g - 1e-9) * g;
+    const last = out.buffer.duration - tailB * bar;
+    while (end > last && L > 2 && pr.type !== 'double') { L = Math.max(2, L / 2 | 0); end = base + Math.ceil((pos + 0.3 * out.rate + (L - tailB) * bar - base) / g - 1e-9) * g; }
+  }
+  rise = rise ?? riseOf(inc);
+  const T0track = end - (L - tailB) * bar;
+  return { id: use, picks, L, T0track, end, rise, incStart: pr.type === 'double' ? rise : undefined, label: `${pr.name} · ${L} bar${L > 1 ? 's' : ''}${pr.type === 'blend' || pr.type === 'double' ? ' · beat-matched' : ' · on the 1'}${note}` };
+}
+async function firePreset(id) {
+  if (freeze.on) resumeAll();
+  audio();
+  if (quickBusy) return;
+  if (mix.phase === 'mixing') return hint('A transition is already running.');
+  const [A, B] = decks, playing = decks.filter(d => d.playing);
+  if (!playing.length) return hint('Start a song first, then pick a transition.');
+  const out = playing.length === 2 ? (+xf.value <= 0 ? A : B) : playing[0], inc = out === A ? B : A;
+  if (inc.playing) return hint('The other deck is already playing. Use the crossfader.');
+  if (!inc.buffer || (inc.item && inc.item.played)) {
+    const n = nextItem();
+    if (n) {
+      quickBusy = true; status('Loading ' + n.name + '…');
+      try { await inc.load(n.file, n); } finally { quickBusy = false; renderPlaylist(); }
+      if (!inc.buffer || !out.playing || inc.playing || mix.phase === 'mixing') return;
+    } else if (!inc.buffer) return hint('Load a song on the other deck or add one to the playlist.');
+  }
+  if (mix.phase === 'waiting') mix.phase = 'idle';
+  if (mix.on) inc.window = autoWindow(inc);
+  const R = presetPlan(out, inc, id, null);
+  if (R.T0track + R.L * barOf(out) > out.buffer.duration + 0.05 && PRESET_BY[R.id].type !== 'drop') return hint('Not enough song left for ' + PRESET_BY[R.id].name + '.');
+  lastRecipes = R.picks;
+  beginMix(out, inc, R.T0track, R.L, R.picks, { vibe: !!mix.vibe, incStart: R.incStart, rise: R.rise, label: R.label, preset: R.id, plan: { kind: 'preset' } });
+  status(`${PRESET_BY[R.id].name}: lands in ${fmt(Math.max(0, (R.end - out.pos()) / out.rate))}`);
+}
+function setQueued(id) {
+  presetQ.id = PRESET_BY[id] ? id : ''; store.set('ddj-next-tr', presetQ.id);
+  document.querySelectorAll('.nexttr').forEach(s => s.value = presetQ.id);
+  document.querySelectorAll('.trchip').forEach(b => b.classList.toggle('queued', b.dataset.p === presetQ.id));
+}
+function initPresets() {
+  const opts = '<option value="">Auto (automix chooses)</option>' + PRESETS.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
+  document.querySelectorAll('.nexttr').forEach(s => { s.innerHTML = opts; s.onchange = () => setQueued(s.value); });
+  const chip = (x, small) => `<button class="trchip" data-p="${x.id}" title="${x.desc}. Tap to fire now."><b>${x.name}</b>${small ? '' : `<small>${x.desc}</small>`}</button>`;
+  document.getElementById('trgrid').innerHTML = PRESETS.map(x => chip(x)).join('');
+  document.getElementById('avchips').innerHTML = PRESETS.map(x => chip(x, true)).join('');
+  document.querySelectorAll('.trchip').forEach(b => b.onclick = () => firePreset(b.dataset.p));
+  setQueued(presetQ.id);
 }
 // ---------- Quick Mix: fast beat-aligned transition on demand ----------
 const QUICK_FX = ['echoOut', 'hpOut', 'brakeStop', 'loopRoll'];
@@ -1900,7 +2838,7 @@ function frame() {
   requestAnimationFrame(frame);
 }
 setInterval(() => { try { automixTick(); if (signature() !== plSig) renderPlaylist(); } catch (err) { console.error(err); } }, 50);
-initFilters(); renderPlaylist(); requestAnimationFrame(frame);
+initFilters(); initPresets(); klUI(); renderPlaylist(); requestAnimationFrame(frame);
 </script>
 </body>
 </html>

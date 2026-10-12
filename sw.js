@@ -1,6 +1,6 @@
 // Daniel DJ service worker: makes the app installable and lets it open offline.
 // Bump CACHE when you publish a new version so phones pick it up.
-const CACHE = 'daniel-dj-v10';
+const CACHE = 'daniel-dj-v11';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
