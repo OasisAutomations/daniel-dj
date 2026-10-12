@@ -203,6 +203,8 @@ body.frozen #avPause{background:var(--ok);border-color:var(--ok);color:#06210f} 
 <script>
 // ---------- BPM detection (energy-onset autocorrelation) ----------
 // BPM-START
+// Beat grid: tempo from onset autocorrelation (coarse), then refined to ~0.01 BPM with a phase-coherence search
+// on the kick/low-band onsets (where do the beats line up best over two minutes); the phase of that fit is the beat offset.
 function detectBPM(data, sr) {
   const hop = Math.round(sr * 0.005), hopSec = hop / sr;           // 5 ms frames
   const start = Math.min(Math.floor(sr * 30), Math.floor(data.length * 0.1));
@@ -211,12 +213,12 @@ function detectBPM(data, sr) {
   if (n < 400) return { bpm: 120, offset: 0 };
   const a = 1 - Math.exp(-2 * Math.PI * 200 / sr);                  // one-pole low-pass ~200 Hz (kick/bass)
   let lp = 0, prev = 0;
-  const onset = new Float32Array(n);
+  const onset = new Float32Array(n), pos = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     let e = 0;
     for (let j = start + i * hop, k = j + hop; j < k; j++) { const x = data[j]; lp += a * (x - lp); e += lp * lp + 0.3 * x * x; }
     const v = Math.log(1 + 1000 * e / hop);
-    onset[i] = Math.max(0, v - prev); prev = v;
+    onset[i] = pos[i] = Math.max(0, v - prev); prev = v;
   }
   let mean = 0; for (let i = 0; i < n; i++) mean += onset[i]; mean /= n;
   for (let i = 0; i < n; i++) onset[i] -= mean;
@@ -231,27 +233,102 @@ function detectBPM(data, sr) {
     const s = (acAt(P) + acAt(2 * P) + acAt(3 * P) + acAt(4 * P)) * prior;
     if (s > bestScore) { bestScore = s; best = bpm; }
   }
-  // beat phase: where do beats land?
-  const P = 60 / best / hopSec;
-  let bestPhi = 0, phiScore = -Infinity;
-  for (let phi = 0; phi < P; phi++) { let s = 0; for (let t = phi; t < n; t += P) s += onset[Math.round(t)] || 0; if (s > phiScore) { phiScore = s; bestPhi = phi; } }
-  const beatLen = 60 / best;
-  let offset = (start / sr + (bestPhi - 0.5) * hopSec) % beatLen;
+  // fine tempo + phase: |sum of onset * e^(i*w*t)| peaks when the grid fits every beat over the whole window
+  const coh = bpm => {
+    const w = 2 * Math.PI * bpm / 60 * hopSec, cw = Math.cos(w), sw = Math.sin(w);
+    let c = 1, s = 0, re = 0, im = 0;
+    for (let i = 0; i < n; i++) { const o = pos[i]; if (o > 0) { re += o * c; im += o * s; } const nc = c * cw - s * sw; s = c * sw + s * cw; c = nc; if ((i & 1023) === 1023) { const m = Math.hypot(c, s); c /= m; s /= m; } }
+    return { mag: Math.hypot(re, im) };
+  };
+  let fb = best, fm = -1; const step = 0.005, span = 0.25, mags = [];
+  for (let b = best - span; b <= best + span + 1e-9; b += step) { const m = coh(b).mag; mags.push(m); if (m > fm) { fm = m; fb = b; } }
+  const k = Math.round((fb - (best - span)) / step);
+  if (k > 0 && k < mags.length - 1) { const y0 = mags[k - 1], y1 = mags[k], y2 = mags[k + 1], d = y0 - 2 * y1 + y2; if (d < 0) fb += step * 0.5 * (y0 - y2) / d; }
+  // beat phase + final tempo: comb over the onsets (sum at every predicted beat), in quarter-frame steps;
+  // off-beat hats can't pull it sideways and the comb is sharper than the coherence peak for the last 0.01 BPM
+  const at = t => { const i = Math.floor(t), f = t - i; return i + 1 < n ? pos[i] * (1 - f) + pos[i + 1] * f : 0; };
+  const comb = (bpm, lo, hi, st) => { const P = 60 / bpm / hopSec; let bp = 0, bs = -1; for (let phi = lo; phi < hi; phi += st) { let sum = 0; for (let t = phi; t < n - 1; t += P) sum += at(t); if (sum > bs) { bs = sum; bp = phi; } } return { s: bs, phi: bp }; };
+  let c0 = comb(fb, 0, 60 / fb / hopSec, 0.25);
+  for (let b = fb - 0.03; b <= fb + 0.03 + 1e-9; b += 0.002) { const c = comb(b, c0.phi - 3, c0.phi + 3, 0.25); if (c.s > c0.s * 1.0005) { c0 = c; fb = b; } }
+  const beatLen = 60 / fb, P = beatLen / hopSec; let i0 = ((c0.phi % P) + P) % P;
+  let offset = (start / sr + (i0 + BEAT_CAL) * hopSec) % beatLen;
   if (offset < 0) offset += beatLen;
-  return { bpm: Math.round(best * 10) / 10, offset };
+  return { bpm: Math.round(fb * 1000) / 1000, offset };
 }
+const BEAT_CAL = 0.1;   // onset-frame to attack-time calibration (frames)
 // BPM-END
 
-// per-bar loudness, used to find the "best part" of a song for shortened automix plays
-function analyzeTrack(mono, sr) {
-  const r = detectBPM(mono, sr), bar = 240 / r.bpm, barRms = [];
-  for (let t = r.offset; t + bar <= mono.length / sr; t += bar) {
-    let s = 0, n = 0; for (let i = Math.floor(t * sr), e = Math.floor((t + bar) * sr); i < e; i += 4) { s += mono[i] * mono[i]; n++; }
-    barRms.push(Math.sqrt(s / Math.max(1, n)));
+// ---------- track analysis: bands, downbeat, phrases, intro / outro, vocal proxy ----------
+// one pass over a ~11 kHz copy: 10 ms frames of full / low (<150 Hz) / mid (300 Hz-3 kHz, a rough vocal proxy) energy,
+// plus a low-band onset envelope (100 frames / s) that automix uses to measure real beat drift during a blend
+function bandFrames(mono, sr) {
+  const D = Math.max(1, Math.round(sr / 11025)), fs = sr / D, fl = Math.round(fs * 0.01), frameSec = fl / fs, n = Math.floor(mono.length / D / fl);
+  const full = new Float32Array(n), low = new Float32Array(n), mid = new Float32Array(n), env = new Uint8Array(n), on = new Float32Array(n);
+  const aL = 1 - Math.exp(-2 * Math.PI * 150 / fs), a3 = 1 - Math.exp(-2 * Math.PI * 300 / fs), a30 = 1 - Math.exp(-2 * Math.PI * 3000 / fs);
+  let l = 0, m1 = 0, m2 = 0, prev = 0, mx = 1e-9, j = 0;
+  for (let f = 0; f < n; f++) {
+    let ef = 0, el = 0, em = 0;
+    for (let k = 0; k < fl; k++) {
+      let x = 0; for (let d = 0; d < D; d++) x += mono[j++]; x /= D;
+      l += aL * (x - l); m1 += a3 * (x - m1); m2 += a30 * (x - m2); const md = m2 - m1;
+      ef += x * x; el += l * l; em += md * md;
+    }
+    full[f] = ef / fl; low[f] = el / fl; mid[f] = em / fl;
+    const v = Math.log(1 + 1000 * (low[f] + 0.3 * full[f])); on[f] = Math.max(0, v - prev); prev = v; if (on[f] > mx) mx = on[f];
   }
-  const info = { bpm: r.bpm, offset: r.offset, duration: mono.length / sr, barRms, key: detectKey(mono, sr), loud: loudness(mono, sr) };
+  for (let f = 0; f < n; f++) env[f] = Math.min(255, Math.round(on[f] / mx * 255 * 1.5));
+  return { full, low, mid, env, frameSec, n };
+}
+const pctl = (xs, p) => { const s = Array.from(xs).filter(v => v > 0).sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * p))] : 1; };
+function analyzeTrack(mono, sr) {
+  const r = detectBPM(mono, sr), beat = 60 / r.bpm, bar = 4 * beat, dur = mono.length / sr;
+  const F = bandFrames(mono, sr), fr = F.frameSec;
+  const meanOf = (arr, t0, t1) => { const a = Math.max(0, Math.floor(t0 / fr)), b = Math.min(F.n, Math.max(a + 1, Math.floor(t1 / fr))); let s = 0; for (let i = a; i < b; i++) s += arr[i]; return s / Math.max(1, b - a); };
+  // downbeat: of the 4 beat positions, the one where energy changes (sections, bass notes) and the strongest kicks land
+  const nb = Math.floor((dur - r.offset) / beat), sc = [0, 0, 0, 0];
+  let pE = 0, pL = 0, pM = 0;
+  for (let b = 0; b < nb; b++) {
+    const t = r.offset + b * beat, E = Math.log(1e-7 + meanOf(F.full, t, t + beat)), L = Math.log(1e-7 + meanOf(F.low, t, t + beat)), M = Math.log(1e-7 + meanOf(F.mid, t, t + beat));
+    const k = Math.max(0, Math.floor((t - 0.03) / fr)); let acc = 0; for (let i = k; i < Math.min(F.n, k + 7); i++) acc = Math.max(acc, F.env[i]);
+    // new sounds start on the 1 (rises count fully); decays spill into the next beat (falls count a quarter)
+    const ch = (x, y) => Math.max(0, x - y) + 0.25 * Math.max(0, y - x);
+    if (b) sc[b % 4] += ch(E, pE) + ch(L, pL) + 0.5 * ch(M, pM) + acc / 255 * 0.15;
+    pE = E; pL = L; pM = M;
+  }
+  const kd = [0, 1, 2, 3].reduce((a, k) => sc[k] > sc[a] ? k : a, 0);
+  const beat0 = (r.offset + kd * beat) % bar;
+  // per-bar band energies from the first downbeat
+  const barRms = [], bLow = [], bMid = [];
+  for (let t = beat0; t + bar <= dur + 1e-6; t += bar) { barRms.push(Math.sqrt(meanOf(F.full, t, t + bar))); bLow.push(Math.sqrt(meanOf(F.low, t, t + bar))); bMid.push(Math.sqrt(meanOf(F.mid, t, t + bar))); }
+  const nB = barRms.length, rL = pctl(bLow, 0.75), rM = pctl(bMid, 0.75), rF = pctl(barRms, 0.75);
+  // fullness: bass + mids (a kick-only intro scores low even when it's loud); vocal proxy: mid share on full-energy bars
+  const barF = barRms.map((_, b) => +Math.min(1.5, 0.4 * bLow[b] / rL + 0.6 * bMid[b] / rM).toFixed(3));
+  const share = barRms.map((v, b) => v > 0 ? bMid[b] / v : 0), sRef = pctl(share, 0.5) || 1;
+  const barV = barRms.map((v, b) => +(clampA(share[b] / Math.max(sRef, 0.05) - 0.6, 0, 1) * clampA(bMid[b] / rM, 0, 1) * clampA(v / rF, 0, 1)).toFixed(3));
+  // phrase grid: 8-bar phrases start where the music changes; pick the bar offset (0-7) with the most change
+  const nov = barF.map((v, b) => b ? Math.abs(Math.log((v + 0.02) / (barF[b - 1] + 0.02))) : 0), ps = new Array(8).fill(0);
+  nov.forEach((v, b) => ps[b % 8] += v);
+  let q = ps.reduce((a, v, i) => v > ps[a] ? i : a, 0); const others = ps.filter((_, i) => i !== q), avg = others.reduce((s, v) => s + v, 0) / Math.max(1, others.length);
+  if (!(ps[q] > 1.5 * avg + 0.05)) q = 0;
+  const info = { v: 2, bpm: r.bpm, offset: beat0, duration: dur, barRms, barF, barV, phraseBar0: q, env: F.env, envRate: 1 / fr, key: detectKey(mono, sr), loud: loudness(mono, sr) };
   Object.assign(info, estimatePhrases(info));
   return info;
+}
+function clampA(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+// Intro / outro on the phrase grid, from "fullness" (bass + mids): the intro ends at the first phrase that's about as full as the
+// body (that's the main energy rise automix lands on), the outro starts where the song stays emptier to the end
+function estimatePhrases(info) {
+  const bar = 240 / info.bpm, q = info.phraseBar0 || 0, f = info.barF || info.barRms, n = f.length, at = b => info.offset + b * bar;
+  const ref = pctl(f, 0.75) || 1, th = 0.62 * ref;
+  const starts = []; for (let b = q; b < n; b += 8) starts.push(b);
+  if (q > 0) starts.unshift(0);
+  const phraseE = (b0, b1) => { let s = 0; for (let b = b0; b < b1; b++) s += f[b]; return s / Math.max(1, b1 - b0); };
+  if (starts.length < 3) return { intro: at(0), outro: at(Math.max(0, n - 8)) };
+  let ii = 0; while (ii < starts.length - 1 && phraseE(starts[ii], starts[ii + 1]) < th) ii++;
+  ii = Math.min(ii, Math.floor(starts.length / 2));
+  let oi = starts.length; while (oi - 1 > ii && phraseE(starts[oi - 1], oi < starts.length ? starts[oi] : n) < th) oi--;
+  const outBar = oi === starts.length ? Math.max(starts[ii] + 8, Math.min(n, starts[starts.length - 1] + 8)) : starts[oi];
+  return { intro: at(starts[ii]), outro: at(Math.min(outBar, n)) };
 }
 // ---------- key detection: chroma from an FFT of a mono 11 kHz downsample, matched to Krumhansl key profiles ----------
 function fft(re, im) {
@@ -315,19 +392,6 @@ function loudness(mono, sr) {
   const rel = dB(mean(g1)) - 10, g2 = g1.filter(p => dB(p) > rel);
   return +dB(mean(g2)).toFixed(2);
 }
-// Intro / outro markers on the 8-bar (32-beat) phrase grid, from the per-bar loudness:
-// intro ends at the first phrase that's about as loud as the body, outro starts where the song stays quieter to the end
-function estimatePhrases(info) {
-  const r = info.barRms, P = 8, bar = 240 / info.bpm, phrases = Math.floor(r.length / P), at = k => info.offset + k * P * bar;
-  if (phrases < 3) return { intro: at(0), outro: at(Math.max(0, phrases - 1)) };
-  const pe = []; for (let k = 0; k < phrases; k++) { let sum = 0; for (let b = k * P; b < (k + 1) * P; b++) sum += r[b]; pe.push(sum / P); }
-  const ref = [...pe].sort((a, b) => a - b)[Math.floor(phrases * 0.75)], th = 0.7 * ref;
-  let ik = 0; while (ik < phrases && pe[ik] < th) ik++;
-  ik = Math.min(ik, Math.floor(phrases / 2));
-  let ok = phrases; while (ok - 1 > ik && pe[ok - 1] < th) ok--;
-  if (ok === phrases) ok = phrases - 1;   // no quiet outro: the last phrase is the outro
-  return { intro: at(ik), outro: at(Math.max(ok, ik + 1)) };
-}
 // waveform colours: peak level per column for low (<200 Hz), mid and high (>2 kHz) bands
 function bandPeaks(mono, sr, N) {
   const a1 = 1 - Math.exp(-2 * Math.PI * 200 / sr), a2 = 1 - Math.exp(-2 * Math.PI * 2000 / sr);
@@ -359,7 +423,7 @@ function chooseWindow(info, len) {
   const want = len[0] === 'b' ? +len.slice(2) : Math.max(16, Math.round(+len.slice(2) / bar / 8) * 8);
   if (want >= n - 4) return null;
   const scores = [];
-  for (let s = 0; s + want <= n; s += 8) { let sum = 0; for (let b = s; b < s + want; b++) sum += info.barRms[b]; scores.push([s, sum / want]); }
+  for (let s = (info.phraseBar0 || 0) % 8; s + want <= n; s += 8) { let sum = 0; for (let b = s; b < s + want; b++) sum += info.barRms[b]; scores.push([s, sum / want]); }
   const top = Math.max(...scores.map(x => x[1]));
   const best = scores.find(x => x[1] >= top * 0.95)[0];   // earliest phrase that's (nearly) as loud as the loudest
   return { start: info.offset + best * bar, end: info.offset + (best + want) * bar, startBar: best, bars: want };
@@ -810,8 +874,8 @@ class Deck {
     const pr = this.src.playbackRate; pr.setValueAtTime(this.effRate, when); pr.linearRampToValueAtTime(0.02, when + len);
     this.src.stop(when + len);
   }
-  setTempo(pct) {   // slider / sync / automix: set the tempo in % (stops any glide)
-    pct = clamp(Math.round(pct * 10) / 10, -8, 8); this.$('.tempo').value = pct;
+  setTempo(pct, exact) {   // slider / sync / automix: set the tempo in % (stops any glide); automix uses the exact value so beats don't drift
+    pct = clamp(exact ? pct : Math.round(pct * 10) / 10, -8, 8); this.$('.tempo').value = Math.round(pct * 10) / 10;
     this.glide = null; this.applyRate(1 + pct / 100);
   }
   // change the real playbackRate, re-anchoring the position maths so pos() stays exact
@@ -845,6 +909,11 @@ class Deck {
     s.nextElementSibling.textContent = db <= -40 ? 'KILL' : (db > 0 ? '+' : '') + db + ' dB';
     if (this[band]) this[band].gain.setTargetAtTime(db, ctx.currentTime, tc);
   }
+  eqUI(band, db) { const s = this.el.querySelector(`.eq[data-band=${band}]`); s.value = db; s.nextElementSibling.textContent = db <= -40 ? 'KILL' : (db > 0 ? '+' : '') + db + ' dB'; }
+  lowAt(db, at, ramp) {   // sample-exact low-EQ change (bass swap on the downbeat)
+    if (!this.low) return; const g = this.low.gain; g.cancelScheduledValues(ctx.currentTime); g.setValueAtTime(g.value, Math.max(ctx.currentTime, at)); g.linearRampToValueAtTime(db, Math.max(ctx.currentTime, at) + ramp);
+  }
+  lowClear() { if (this.low) this.low.gain.cancelScheduledValues(ctx.currentTime); }
   // ---- effects ----
   setFX(k, on, amt) {
     const f = this.fx[k]; f.on = on; if (amt !== undefined) f.amt = amt;
@@ -1003,12 +1072,12 @@ if (crates.sel !== 'All' && !CRATE_NAMES.includes(crates.sel)) crates.sel = 'All
 const bpmRange = store.get('ddj-bpm-range', { min: null, max: null });
 // fold half / double time into the usual DJ range (70-180 BPM, same as the detector): 62 -> 124, 200 -> 100
 const foldBpm = b => { if (!b) return 0; while (b < 70) b *= 2; while (b >= 180) b /= 2; return b; };
-const crateOf = it => { if (!it || !it.bpm) return null; const b = foldBpm(it.bpm), e = crates.edges; return b < e[0] ? 'Chill' : b < e[1] ? 'Mid' : b < e[2] ? 'House' : 'Fast'; };
+const crateOf = it => { if (!it || !it.bpm) return null; const b = Math.round(foldBpm(it.bpm) * 10) / 10 /* as shown; the beat grid keeps 0.001 BPM */, e = crates.edges; return b < e[0] ? 'Chill' : b < e[1] ? 'Mid' : b < e[2] ? 'House' : 'Fast'; };
 const rangeOn = () => bpmRange.min != null || bpmRange.max != null;
 // in range if the BPM, half or double falls inside [min, max]; with only one bound set, the plain BPM is compared
 function inRange(it) {
   if (!rangeOn()) return true; if (!it.bpm) return false;
-  const { min, max } = bpmRange, ok = b => (min == null || b >= min) && (max == null || b <= max);
+  const { min, max } = bpmRange, ok = b => { b = Math.round(b * 10) / 10; return (min == null || b >= min) && (max == null || b <= max); };
   return min != null && max != null ? [1, 0.5, 2].some(m => ok(it.bpm * m)) : ok(it.bpm);
 }
 const scoped = () => crates.sel !== 'All' || rangeOn();
@@ -1018,13 +1087,15 @@ const eligible = it => inCrate(it) && inRange(it);
 // automix: if one of the next two songs has a clearly better key match and about the same tempo jump (within 1.5%)
 // as the planned next song, play it first (songs you placed by hand are never swapped)
 function smartNext(live) {
+  // automix: look at the next few songs (in the active crate / BPM range) and play the one that mixes best:
+  // Camelot-compatible key and a beat-matchable tempo. Songs you placed by hand are never moved.
   const n0 = nextItem(); if (!n0 || !live || !live.bpm || n0.pinned) return n0;
-  const lk = camOf(live.item || { info: live.info }); if (!lk || !camOf(n0)) return n0;
-  const i0 = playlist.indexOf(n0), cands = playlist.slice(i0 + 1).filter(it => !it.played && !isLive(it) && !it.pinned && it.bpm && camOf(it) && eligible(it)).slice(0, 2);
-  const j = it => Math.abs(jumpPct(live.liveBpm, it.bpm));
+  const lk = camOf(live.item || { info: live.info });
+  const i0 = playlist.indexOf(n0), cands = playlist.slice(i0 + 1).filter(it => !it.played && !isLive(it) && !it.pinned && it.bpm && eligible(it)).slice(0, 3);
+  const cost = it => { if (!it.bpm) return 9; const j = Math.abs(jumpPct(live.liveBpm, it.bpm)), k = lk && camOf(it) ? Math.min(3, keyDist(lk, camOf(it))) : 1.5; return k + (j > 8 ? 3 : j / 8); };
   let best = n0;
-  for (const c of cands) if (keyDist(lk, camOf(c)) < keyDist(lk, camOf(best)) && j(c) <= j(n0) + 1.5) best = c;
-  if (best !== n0) { playlist.splice(playlist.indexOf(best), 1); playlist.splice(i0, 0, best); renderPlaylist(); mix.keySwap = `${best.name} (${camOf(best)}) moved up: better key match than ${n0.name} (${camOf(n0)})`; }
+  for (const c of cands) if (cost(c) < cost(best) - 0.75) best = c;
+  if (best !== n0) { playlist.splice(playlist.indexOf(best), 1); playlist.splice(i0, 0, best); renderPlaylist(); mix.keySwap = `${best.name} (${camOf(best) || '?'}) moved up: mixes better than ${n0.name} (${camOf(n0) || '?'})`; status('Automix: ' + mix.keySwap); }
   return best;
 }
 function nextItem() {  // first song after the one that's playing that hasn't been played yet
@@ -1386,7 +1457,7 @@ function setAutomix(on) {
 amBtn.onclick = () => setAutomix(!mix.on);
 function cancelMix(quiet) {  // a hand on the crossfader only cancels a transition that is actually running
   if (mix.phase !== 'mixing') { if (quiet) mix.phase = 'idle'; return; }
-  mix.in.setEQ('low', 0); mix.out.setEQ('low', 0); endFX(true);
+  mix.in.lowClear(); mix.out.lowClear(); mix.in.setEQ('low', 0); mix.out.setEQ('low', 0); if (!mix.in.ptr) mix.in.setBend(0); endFX(true);
   mix.phase = 'idle'; fxLabel.textContent = 'Automix FX: cancelled';
   if (!quiet) setAutomix(false), status('Transition cancelled. You are in control.');
 }
@@ -1437,41 +1508,15 @@ function automixTick() {
   if (mix.phase === 'waiting') {
     const { out, in: inc } = mix;
     if (!out.playing || inc.playing || !inc.buffer) { mix.phase = 'idle'; return; }
-    const beat = out.bpm ? 60 / out.bpm : 0.5, bar = 4 * beat, pos = out.pos(), dur = out.buffer.duration, win = out.window;
-    // exit point: end of the shortened window, or the last full bar of the song
-    // a shortened song needs room to mix in AND out, so each mix gets at most a quarter of its window
-    const roomBars = Math.min(win ? win.bars / 4 : Math.floor(dur * 0.4 / bar), inc.window ? inc.window.bars / 4 : Infinity);
-    let mixBars = Math.max(1, Math.min(+document.getElementById('bars').value, Math.floor(roomBars)));
-    const vibe = !!mix.vibe; if (vibe) mixBars = Math.max(1, Math.min(4, Math.floor(roomBars)));   // crate switch: short, no long blend
-    // exit point: hot cue 4 / end of the shortened window, else phrase-aware: start the mix at the outro marker
-    // and finish it on a phrase boundary (8 bars = 32 beats), never past the last full bar
-    const lastEnd = out.beat0 + Math.floor((dur - out.beat0) / bar) * bar, P = 8 * bar;
-    let endPt;
-    if (win && win.end !== Infinity) endPt = win.end;
-    else {
-      const os = out.info && out.info.outro != null ? out.info.outro : lastEnd - P;
-      endPt = os + Math.ceil(mixBars / 8) * P;
-      while (endPt > lastEnd + 1e-6 && endPt - P > pos) endPt -= P;
-    }
-    const t0Plain = endPt - mixBars * bar, lead = (t0Plain - pos) / out.rate;
+    const pos = out.pos(), P = planAuto(out, inc, pos, !!mix.vibe), lead = (P.T0plain - pos) / out.rate;
     const want = nextItem();
     if (want && want !== inc.item && lead > 8) { mix.phase = 'idle'; return; }   // playlist was reordered: load the new next song
-    status(`Automix: next up "${inc.$('.name').textContent}" in ${fmt(lead)}`);
-    if (lead > 1) return;
-    const intensity = document.getElementById('intensity').value;
-    const need = { exit: !!win && !win.fromCues, sweepIn: !!inc.window && inc.window.startBar > 0 && !inc.window.fromCues };
-    let T0track, picks;
-    if (lead >= 0.1) {
-      picks = vibe ? vibePicks(mixBars) : fxAuto.on ? pickRecipes(mixBars, intensity, need) : [];
-      // exit recipes cut the song AT the exit point and ring out for 2 more bars
-      T0track = t0Plain + tailFor(picks, bar, mixBars * bar, false);
-    } else {   // running late (e.g. automix switched on near the end): start on the next bar and squeeze the mix in
-      T0track = out.beat0 + Math.ceil((pos + 0.15 - out.beat0) / bar) * bar;
-      if (T0track > dur - 1) T0track = pos + 0.15;
-      mixBars = Math.max(1, Math.min(mixBars, Math.floor((Math.max(endPt, dur) - T0track) / bar)));
-      picks = vibe ? vibePicks(mixBars) : fxAuto.on ? pickRecipes(mixBars, intensity, need) : [];
-    }
-    beginMix(out, inc, T0track, mixBars, picks, { vibe });
+    status(`Automix: next up "${inc.$('.name').textContent}" in ${fmt(lead)} · ${planLabel(P, [])}`);
+    if (lead > 1 && !P.late) return;
+    const picks = planPicks(P), bar = barOf(out);
+    // exit moves cut the song AT the phrase boundary and ring out for 2 more bars
+    const T0track = P.T0plain + tailFor(picks, bar, P.L * bar, false);
+    beginMix(out, inc, T0track, P.L, picks, { vibe: P.kind === 'vibe', incStart: P.incStart, rise: P.rise, label: planLabel(P, picks), plan: P });
   }
 }
 // vibe change (after a crate switch): Power-down, Echo out or Cut on the 1, never a long beat-matched blend
@@ -1482,29 +1527,144 @@ function vibePicks(bars, quick) {
   if (!set.length) return [];
   const k = pickOne(set); mix.lastVibe = k; lastRecipes = [k]; return [k];
 }
+// ---------- smart transitions: tempo fit, phrase timing, intro/outro, energy + vocal overlap, bass swap, drift lock ----------
+const barOf = d => 240 / (d.bpm || 120);
+// can the incoming song be beat-matched to the outgoing one? (8% rule, half/double time; a hand-set tempo stays put)
+// m = incoming beats per outgoing beat (1, 2 or 0.5)
+function tempoFit(out, inc) {
+  if (!out.bpm || !inc.bpm) return { ok: false, pct: null, m: 1 };
+  let best = null, bm = 1;
+  for (const m of [1, 2, 0.5]) {
+    const p = inc.manual ? (inc.liveBpm / (out.liveBpm * m) - 1) * 100 : (out.liveBpm * m / inc.bpm - 1) * 100;
+    if (best === null || Math.abs(p) < Math.abs(best)) { best = p; bm = m; }
+  }
+  return { ok: Math.abs(best) <= (inc.manual ? 1.5 : 8), pct: best, m: bm, manual: inc.manual };
+}
+const avgBars = (arr, b0, b1) => { if (!arr || !arr.length) return 0.5; b0 = Math.max(0, Math.floor(b0 + 1e-6)); b1 = Math.min(arr.length, Math.ceil(b1 - 1e-6)); let s = 0; for (let b = b0; b < b1; b++) s += arr[b]; return b1 > b0 ? s / (b1 - b0) : arr[Math.min(arr.length - 1, b0)] || 0; };
+const BUSY = 0.75, VOCAL = 0.3;
+// plan where and how to mix (deterministic, so it can be re-checked every tick while waiting)
+function planAuto(out, inc, pos, vibe) {
+  const oi = out.info || {}, ii = inc.info || {}, bar = barOf(out), dur = out.buffer.duration, win = out.window, q = oi.phraseBar0 || 0;
+  const fit = tempoFit(out, inc), want = +document.getElementById('bars').value, ib = barOf(inc), m = fit.ok ? fit.m : 1;
+  const bi = t => (t - out.beat0) / bar, lastEnd = out.beat0 + Math.floor((dur - out.beat0) / bar + 1e-6) * bar;
+  // exit point: hot cue 4 / end of a shortened window, else the last 8-bar phrase boundary of the song
+  let endPt = win && win.end !== Infinity ? win.end : out.beat0 + (Math.floor((bi(lastEnd) - q) / 8 + 1e-6) * 8 + q) * bar;
+  if (endPt - 4 * bar < pos) endPt = lastEnd;   // already past it (seeked / switched on late)
+  const outroStart = oi.outro != null ? Math.min(oi.outro, endPt) : endPt - 16 * bar, outroLen = (endPt - outroStart) / bar;
+  const room = Math.min(win ? win.bars / 4 : Infinity, inc.window ? inc.window.bars / 4 : Infinity);   // shortened songs need room to mix in and out
+  // incoming: its main energy rise (end of the intro / start of a shortened window) should land on our exit point; hot cue 1 is fixed
+  let rise = ii.intro != null ? ii.intro : inc.beat0, fixed = null;
+  if (inc.window && inc.window.fromCues) fixed = inc.window.start; else if (inc.window) rise = inc.window.start;
+  const introLen = fixed != null ? Infinity : Math.max(0, (rise - inc.beat0) / (ib * m));
+  const ahead = L => (endPt - L * bar - pos) / out.rate > 0.5;   // automix starts the move at 1 s lead, so plans stay stable
+  const lens = [32, 16, 8, 4].filter(L => L <= Math.max(4, want) && L <= Math.max(4, room));
+  let L = lens.find(L => L <= outroLen + 0.01 && L <= introLen + 0.01 && ahead(L)) || lens.find(L => L <= Math.max(outroLen, introLen) + 0.01 && ahead(L)) || lens.find(ahead) || 0;
+  const late = !L;
+  let T0plain = endPt - L * bar;
+  if (late) { T0plain = out.beat0 + Math.ceil((pos + 0.15 * out.rate - out.beat0) / bar) * bar; L = Math.max(1, Math.min(4, Math.floor((Math.max(lastEnd, endPt) - T0plain) / bar))); endPt = T0plain + L * bar; }
+  const incStart = fixed != null ? fixed : Math.max(inc.beat0, rise - L * m * ib);
+  const ib0 = (incStart - inc.beat0) / ib;
+  const outE = avgBars(oi.barF, bi(T0plain), bi(endPt)), outV = avgBars(oi.barV, bi(T0plain), bi(endPt));
+  const incE = avgBars(ii.barF, ib0, ib0 + L * m), incV = avgBars(ii.barV, ib0, ib0 + L * m), riseE = avgBars(ii.barF, (rise - inc.beat0) / ib, (rise - inc.beat0) / ib + 4);
+  const outPart = T0plain >= outroStart - bar / 2 ? 'outro' : 'body', inPart = fixed != null ? 'cue 1' : incStart + L * m * ib <= rise + ib / 2 ? 'intro' : 'body';
+  let kind = 'blend', why = `${outPart} → ${inPart}`;
+  if (vibe) { kind = 'vibe'; L = Math.min(L, 4); why = 'vibe change'; }
+  else if (!fit.ok) { kind = 'gap'; L = Math.min(L, 4); why = fit.pct == null ? 'no BPM' : `BPM gap ${Math.abs(fit.pct).toFixed(0)}%`; }
+  else if (genre().swap === 'none') { kind = 'cutstyle'; L = Math.min(L, 4); why = genre().label + ' style'; }
+  else if ((outE >= BUSY && incE >= BUSY) || (outV >= VOCAL && incV >= VOCAL)) { kind = 'busy'; L = Math.min(L, 8); why = outV >= VOCAL && incV >= VOCAL ? 'vocals would overlap' : 'both sections busy'; }
+  if (L < (late ? 1 : 4) && kind === 'blend') kind = 'busy';
+  const T0 = endPt - L * bar;   // shorter moves still finish on the same phrase boundary
+  return { kind, why, L, endPt, T0plain: T0, incStart: kind === 'blend' || kind === 'busy' ? (fixed != null ? fixed : Math.max(inc.beat0, rise - L * m * ib)) : null, rise: fixed != null ? fixed : rise,
+    fit, outE, incE, outV, incV, riseE, late, phraseStart: Math.abs(((bi(T0) - q) % 8 + 8) % 8) < 1e-3 };
+}
+// pick the moves for a plan (random only for variety among equally good options)
+function planPicks(P) {
+  const intensity = document.getElementById('intensity').value, L = P.L, no = k => k !== lastRecipes[0];
+  if (P.kind === 'vibe') return vibePicks(L);
+  if (!fxAuto.on) return [];
+  if (P.kind === 'gap') {
+    // tempos too far apart: no blend. Land the next song on the 1 if it starts with energy, power down a busy song, else echo out
+    const pref = P.riseE >= BUSY ? ['slamCut', 'echoOut', 'brakeStop'] : P.outE >= BUSY ? ['brakeStop', 'echoOut', 'slamCut'] : ['echoOut', 'brakeStop', 'slamCut'];
+    const k = pref.filter(k => allowed(k, L)).find(no) || pref.find(k => allowed(k, L)); lastRecipes = k ? [k] : []; return k ? [k] : [];
+  }
+  if (P.kind === 'cutstyle') return pickRecipes(L, intensity, { exit: true });
+  if (P.kind === 'busy') { const k = L >= 8 ? 'hpOut' : allowed('echoOut', L) ? 'echoOut' : 'slamCut'; lastRecipes = [k]; return allowed(k, L) ? [k] : []; }
+  // good conditions: a clean EQ blend, sometimes with one gentle sweep from the genre's moves
+  const pool = genre().pool, deco = ['hpOut', 'lpIn', 'flangeOut'].filter(k => pool[k] > 0 && no(k));
+  if (intensity !== 'subtle' && deco.length && Math.random() < (intensity === 'wild' ? 0.8 : 0.4)) { const k = weightedPick(deco, pool); lastRecipes = [k]; return [k]; }
+  lastRecipes = []; return [];
+}
+function planLabel(P, picks) {
+  const names = picks.map(p => RECIPES[p].label).join(' + ');
+  const t = P.kind === 'blend' ? `EQ blend · phrase ${P.L} · bass swap${names ? ' + ' + names : ''}` : P.kind === 'busy' ? `Short ${names || 'blend'} · ${P.L} bars${picks.some(p => RECIPES[p].cut) ? '' : ' · bass swap'}`
+    : `${names || 'Crossfade'} · ${P.L} bars`;
+  return (P.late ? 'Late: ' : '') + t + ' · ' + P.why;
+}
+// measured beat offset between the decks from their kick envelopes over the last W seconds (seconds, + = incoming ahead), or null
+function audioLag(out, inc, W) {
+  const eo = out.info && out.info.env, ei = inc.info && inc.info.env; if (!eo || !ei || W < 1) return null;
+  const Ro = out.info.envRate, Ri = inc.info.envRate, ro = out.effRate, ri = inc.effRate, po = out.pos(), pi = inc.pos(), st = 0.01, N = Math.floor(W / st);
+  const samp = (env, R, t) => { const x = t * R, i = Math.floor(x), f = x - i; return i < 0 || i + 1 >= env.length ? 0 : env[i] * (1 - f) + env[i + 1] * f; };
+  const A = new Float32Array(N); let ea = 0; for (let k = 0; k < N; k++) { A[k] = samp(eo, Ro, po - k * st * ro); ea += A[k]; }
+  const lags = []; let b = 0;
+  for (let j = 0; j <= 40; j++) { const L = -0.06 + j * 0.003; let s = 0; for (let k = 0; k < N; k++) s += A[k] * samp(ei, Ri, pi + (L - k * st) * ri); lags.push(s); if (s > lags[b]) b = j; }
+  const mean = lags.reduce((a, v) => a + v, 0) / lags.length;
+  if (!(ea > N * 2) || !(lags[b] > mean * 1.3) || b === 0 || b === 40) return null;
+  const y0 = lags[b - 1], y1 = lags[b], y2 = lags[b + 1], d = y0 - 2 * y1 + y2, fr = d < 0 ? 0.5 * (y0 - y2) / d : 0;
+  return -(-0.06 + (b + fr) * 0.003);
+}
+// once per bar during a beat-matched blend: measure the phase error and nudge the incoming speed (max ±0.5%, smoothed) to cancel it
+function lockTick(now) {
+  const { out, in: inc } = mix;
+  if (!mix.lock || now > mix.lockUntil || !inc.playing || !out.playing || inc.t0 > now - 0.05 || out.brk || inc.brk || out.rolling || out.scr || inc.scr || inc.ptr) return;
+  const ob = 60 / out.bpm, k = Math.floor((out.pos() - out.beat0) / (4 * ob));
+  if (k === mix.lockBar) return; mix.lockBar = k;
+  const T = 4 * ob / out.effRate, ib = 60 / inc.bpm;
+  const fo = (out.pos() - out.beat0) / ob, fi = (inc.pos() - inc.beat0) / ib / mix.lockM;
+  let e = ((((fi - fo) % 1) + 1.5) % 1 - 0.5) * ob / out.effRate;   // beat-grid error
+  const a = audioLag(out, inc, Math.min(2 * T, now - inc.t0)); if (a !== null && Math.abs(a - e) < 0.05) e = a;   // measured on the kicks
+  const P = mix.lockPrev, r = P ? clamp((e - P.e) / Math.max(0.2, now - P.t) - P.b, -0.01, 0.01) : 0;
+  mix.lockR = P ? 0.5 * mix.lockR + 0.5 * r : 0;
+  const b = clamp(-mix.lockR - e / T, -0.005, 0.005);
+  inc.setBend(b); mix.lockPrev = { e, t: now, b }; mix.lockLog.push([+(e * 1000).toFixed(2), +(b * 100).toFixed(3), a !== null]);
+}
 // Start a beat-aligned transition: incoming deck starts at song time T0track of the outgoing deck
 function beginMix(out, inc, T0track, mixBars, picks, opts = {}) {
   const now = ctx.currentTime, beat = out.bpm ? 60 / out.bpm : 0.5, bar = 4 * beat, pos = out.pos(), win = out.window;
   // beat-match only when the tempos are within 8% (half/double time counts); otherwise a plain crossfade at the song's own tempo.
   // a deck whose tempo you set by hand is never retimed. The outgoing deck stops any glide so the match target holds still.
   out.glide = null;
-  if (!inc.manual) { const pct = inc.matchPct(out); inc.setTempo(pct !== null && Math.abs(pct) <= 8 ? pct : 0); }
+  let matched = false;
+  if (!inc.manual) { const pct = inc.matchPct(out); matched = pct !== null && Math.abs(pct) <= 8; inc.setTempo(matched ? pct : 0, true); }
   const when = now + (T0track - pos) / out.rate, barR = bar / out.rate, mixDur = mixBars * barR;
   const from = +xf.value, to = inc === decks[0] ? -100 : 100, tail = opts.tail ?? tailFor(picks, barR, mixDur, !!opts.quick);
   Object.assign(mix, { out, in: inc, snapOut: out.snapshotFX(), snapIn: inc.snapshotFX(), quick: !!opts.quick });
-  const incStart = opts.incStart ?? (inc.window ? inc.window.start : inc.beat0);
   const cut = picks.some(p => RECIPES[p].cut), tx = when + mixDur - tail;
-  mix.swap = cut ? 'none' : genre().swap;
-  if (mix.swap !== 'none') inc.setEQ('low', -40);
   // cut moves: the incoming song starts right on the drop (chop: one bar earlier, for the chops)
   const incWhen = !cut ? when : picks.includes('chop') ? tx - barR : tx;
+  // incoming start: given by the planner, else back from its energy rise so the rise lands on the exit point (whole bars of its own grid)
+  let incStart = opts.incStart;
+  if (incStart == null && opts.rise != null) { const ib = barOf(inc), d = (tx - incWhen) * inc.effRate; incStart = Math.max(inc.beat0, opts.rise - Math.ceil(d / ib - 1e-6) * ib); }
+  if (incStart == null) incStart = inc.window ? inc.window.start : inc.beat0;
+  // bass swap: the incoming bass stays cut, then both basses swap on the downbeat at the middle of the blend (one bass at a time)
+  mix.swap = cut ? 'none' : genre().swap === 'none' ? 'none' : genre().swap;
+  if (mix.swap !== 'none') {
+    inc.setEQ('low', -40, 0.005);
+    const half = Math.max(1, Math.round(mixBars / 2)), swapAt = Math.min(when + half * barR, tx), ramp = mix.swap === 'fast' ? 0.006 : 0.02;
+    mix.swapAt = swapAt; mix.swapRamp = ramp;
+  } else mix.swapAt = null;
+  // drift lock while both play beat-matched (until an exit move takes the outgoing song away)
+  const fit = tempoFit(out, inc);
+  Object.assign(mix, { lock: matched && fit.ok, lockM: fit.m, lockUntil: picks.some(p => RECIPES[p].exit) ? tx - barR / 2 : when + mixDur, lockBar: null, lockPrev: null, lockR: 0, lockLog: [] });
   inc.off = incStart; inc.play(incWhen);
   const plan = planFX(out, inc, picks, when, mixDur, barR, beat / out.rate, from, to, tail, incStart);
+  if (mix.swapAt != null) plan.events.push({ t: mix.swapAt - 0.25, fn: () => { inc.lowAt(0, mix.swapAt, mix.swapRamp); out.lowAt(-40, mix.swapAt, mix.swapRamp); } });
   const exit = picks.some(p => RECIPES[p].exit), exitTrack = T0track + (exit ? mixDur - tail : mixDur) * out.rate;
   mix.last = { incWhen, tx, tail, picks, outStartBar: (T0track - out.beat0) / bar, exitBar: (exitTrack - out.beat0) / bar, startCtx: when, endCtx: when + mixDur,
-    exitFromWindowStart: win ? (exitTrack - win.start) / bar : null, outroBar: out.info && out.info.outro != null ? (out.info.outro - out.beat0) / bar : null, incStartBar: (incStart - inc.beat0) / (240 / (inc.bpm || 120)), mixBars, shortened: !!win, quick: !!opts.quick };
+    exitFromWindowStart: win ? (exitTrack - win.start) / bar : null, outroBar: out.info && out.info.outro != null ? (out.info.outro - out.beat0) / bar : null, incStartBar: (incStart - inc.beat0) / (240 / (inc.bpm || 120)), mixBars, shortened: !!win, quick: !!opts.quick,
+    kind: opts.plan ? opts.plan.kind : opts.quick ? 'quick' : '', label: opts.label || '', plan: opts.plan || null, swapAt: mix.swapAt, incStart, rise: opts.rise ?? null, lock: mix.lock, matched, T0track, outQ: out.info ? out.info.phraseBar0 || 0 : 0 };
   if (opts.vibe) mix.vibe = false; mix.last.vibe = !!opts.vibe;
-  fxLabel.textContent = (opts.vibe ? 'Vibe change: ' : opts.quick ? 'Quick Mix: ' : 'Automix: ') + (picks.length ? picks.map(p => RECIPES[p].label).join(' + ') : (fxAuto.on ? 'none' : 'off')) + (win ? ' · short cut' : '');
+  fxLabel.textContent = opts.label ? opts.label + (win ? ' · short cut' : '') : (opts.vibe ? 'Vibe change: ' : opts.quick ? 'Quick Mix: ' : 'Automix: ') + (picks.length ? picks.map(p => RECIPES[p].label).join(' + ') : (fxAuto.on ? 'none' : 'off')) + (win ? ' · short cut' : '');
   Object.assign(mix, { phase: 'mixing', start: when, dur: mixDur, swapped: false, plan });
 }
 function mixingTick(now) {
@@ -1512,16 +1672,13 @@ function mixingTick(now) {
   status(`${mix.quick ? 'Quick Mix' : 'Automix'}: mixing into ${inc.id}… ${Math.round(p * 100)}%`);
   const xv = keyAt(mix.plan.xkeys, now);
   if (now >= mix.plan.xOwnFrom) xf.value = xv; else userlessXF(xv);   // cuts/chops: audio is pre-scheduled, slider only follows
-  if (mix.swap === 'long') {   // chill: hand the bass over gradually across the middle of the mix
-    const q = clamp((p - 0.25) / 0.5, 0, 1), db = v => Math.max(-40, Math.round(20 * Math.log10(Math.max(v, 0.01))));
-    if (+inc.$('.eq[data-band=low]').value !== db(q)) inc.setEQ('low', db(q));
-    if (+out.$('.eq[data-band=low]').value !== db(1 - q)) out.setEQ('low', db(1 - q));
-  } else if (mix.swap !== 'none' && p >= 0.5 && !mix.swapped) {
-    mix.swapped = true; const tc = mix.swap === 'fast' ? 0.004 : 0.03; inc.setEQ('low', 0, tc); out.setEQ('low', -40, tc);
-  }
+  if (mix.swapAt != null && !mix.swapped && now >= mix.swapAt + mix.swapRamp) { mix.swapped = true; inc.eqUI('low', 0); out.eqUI('low', -40); }   // audio was scheduled on the beat
+  lockTick(now);
   runPlan(mix.plan, now);
   if (p >= 1) {
-    out.pause(); out.fresh = false; out.window = null; out.setEQ('low', 0); inc.setEQ('low', 0); endFX(false); mix.phase = 'idle'; mix.last.doneCtx = now;
+    out.pause(); out.fresh = false; out.window = null; out.lowClear(); inc.lowClear(); out.setEQ('low', 0); inc.setEQ('low', 0); endFX(false); mix.phase = 'idle'; mix.last.doneCtx = now;
+    if (inc.bend && !inc.ptr) { const r = inc.effRate; inc.bend = 0; inc.applyRate(r); }   // fold the drift nudge into the tempo (no audible step)
+    mix.last.lockLog = mix.lockLog;
     inc.startGlide(6);   // blend done: ease the live song back to its own tempo (skipped if you set its tempo)
     if (!mix.on) status(`Quick Mix done. Deck ${inc.id} is live.`);
   }
