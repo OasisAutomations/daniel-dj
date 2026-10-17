@@ -1204,14 +1204,14 @@ const fmtDur = s => { s = Math.round(Math.max(0, s)); const h = Math.floor(s / 3
 const fmt = s => { s = Math.max(0, s); return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0'); };
 function audio() {
   if (!ctx) {
-    ctx = new AudioContext();
+    ctx = new AudioContext({ latencyHint: 'playback' });   // bigger buffers: no dropouts when the phone throttles the CPU with the screen off
     // master: a little headroom -> gentle glue compressor -> fast limiter, so FX stacks never clip
     master = ctx.createGain(); master.gain.value = 0.8;
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -12; comp.knee.value = 8; comp.ratio.value = 3; comp.attack.value = 0.01; comp.release.value = 0.25;
     limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -2; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.002; limiter.release.value = 0.1;
-    master.connect(comp); comp.connect(limiter); limiter.connect(ctx.destination);
+    master.connect(comp); comp.connect(limiter); limiter.connect(ctx.destination); bgAnchorSetup();
     // generated reverb impulse: 2.8 s of decaying stereo noise
     const len = Math.floor(ctx.sampleRate * 2.8); reverbIR = ctx.createBuffer(2, len, ctx.sampleRate);
     for (let c = 0; c < 2; c++) { const d = reverbIR.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
@@ -2495,6 +2495,7 @@ function lockTick(now) {
   const fo = (out.pos() - out.beat0) / ob, fi = (inc.pos() - inc.beat0) / ib / mix.lockM;
   let e = ((((fi - fo) % 1) + 1.5) % 1 - 0.5) * ob / out.effRate;   // beat-grid error
   const a = audioLag(out, inc, Math.min(2 * T, now - inc.t0)); if (a !== null && Math.abs(a - e) < 0.05) e = a;   // measured on the kicks
+  if (mix.lockPrev && now - mix.lockPrev.t > 3 * T) mix.lockPrev = null, mix.lockR = 0;   // ticks were starved (screen off): restart the estimate, don't act on a stale slope
   const P = mix.lockPrev, r = P ? clamp((e - P.e) / Math.max(0.2, now - P.t) - P.b, -0.01, 0.01) : 0;
   mix.lockR = P ? 0.5 * mix.lockR + 0.5 * r : 0;
   const b = clamp(-mix.lockR - e / T, -0.005, 0.005);
@@ -2502,6 +2503,8 @@ function lockTick(now) {
 }
 // Start a beat-aligned transition: incoming deck starts at song time T0track of the outgoing deck
 function beginMix(out, inc, T0track, mixBars, picks, opts = {}) {
+  // only one transition at a time: a late or doubled timer tick (phone screen off) must never start a second one on top
+  if (mix.phase === 'mixing' || inc.playing || !out.playing) return;
   const now = ctx.currentTime, beat = out.bpm ? 60 / out.bpm : 0.5, bar = 4 * beat, pos = out.pos(), win = out.window;
   // beat-match only when the tempos are within 8% (half/double time counts); otherwise a plain crossfade at the song's own tempo.
   // a deck whose tempo you set by hand is never retimed. The outgoing deck stops any glide so the match target holds still.
@@ -2751,6 +2754,31 @@ function autoView() {
   else if (n) { set('avNext', n.name); set('avNextM', [n.bpm ? n.bpm.toFixed(1) + ' BPM' : '', camOf(n) || ''].filter(Boolean).join(' · ')); }
   else { set('avNext', '—'); set('avNextM', 'Playlist finished'); }
 }
+// ---------- background playback (screen off / phone locked) ----------
+// On phones the mix is also routed into a real <audio> element. Android treats that as media playback (like a music app),
+// so it keeps the page running at full priority, shows lock-screen controls, and doesn't starve the audio thread.
+const bg = { el: null, dest: null, on: false };
+function bgAnchorSetup() {
+  if (!matchMedia('(pointer: coarse)').matches || !ctx.createMediaStreamDestination) return;
+  try {
+    bg.dest = ctx.createMediaStreamDestination(); limiter.connect(bg.dest);
+    bg.el = document.createElement('audio'); bg.el.setAttribute('playsinline', ''); bg.el.srcObject = bg.dest.stream; bg.el.muted = true;
+    document.body.appendChild(bg.el);
+    bg.el.addEventListener('pause', () => { if (bg.on && !freeze.on) pauseAll(); });   // Android paused us (call, other app took audio): pause the mix too
+  } catch (e) { bg.el = null; }
+}
+function bgAnchorPlay() {   // called from a tap; once the element plays, move the speaker output onto it (no doubled sound)
+  if (!bg.el || bg.on) return;
+  bg.el.play().then(() => { if (bg.on) return; bg.on = true; bg.el.muted = false; try { limiter.disconnect(ctx.destination); } catch (e) {} }).catch(() => {});
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (ctx && ctx.state !== 'running' && !freeze.on) ctx.resume().catch(() => {});
+  if (bg.on && bg.el.paused && !freeze.on) bg.el.play().catch(() => {});
+  lastFrame = performance.now();
+  if (ctx && mix.phase === 'mixing') { mix.lockPrev = null; mix.lockR = 0; }   // recompute from the AudioContext clock, don't replay missed ticks
+  mixLast = 0; mixTick();
+});
 // ---------- phone helpers: unlock audio on the first tap (iOS), keep the screen awake, PWA when hosted ----------
 // ---------- Pause / Resume everything (automix view, Space, lock screen) ----------
 // Suspending the AudioContext freezes its clock. Every deck, the transition timeline, FX lanes, the tempo glide and
@@ -2759,13 +2787,13 @@ function autoView() {
 const freeze = { on: false };
 function pauseAll() {
   if (!ctx || freeze.on || !decks.some(d => d.playing)) return;
-  freeze.on = true; document.body.classList.add('frozen'); ctx.suspend();
+  freeze.on = true; document.body.classList.add('frozen'); ctx.suspend(); if (bg.on) bg.el.pause();
   status(mix.phase === 'mixing' ? 'Paused mid-transition. Resume carries on from here.' : 'Paused. Automix ' + (mix.on ? 'stays on.' : 'is off.'));
   freezeUI();
 }
 function resumeAll() {
   if (!freeze.on) return; freeze.on = false; document.body.classList.remove('frozen');
-  if (ctx) ctx.resume(); status(mix.on ? 'Resumed. Automix is on.' : 'Resumed.'); freezeUI();
+  if (ctx) ctx.resume(); if (bg.on) bg.el.play().catch(() => {}); status(mix.on ? 'Resumed. Automix is on.' : 'Resumed.'); freezeUI();
 }
 // Pause button / Space in the automix view: pause, resume, or start automix when nothing is playing
 function pauseToggle() {
@@ -2798,6 +2826,7 @@ function unlockAudio() {
   } catch (e) {}
 }
 ['pointerdown', 'touchend', 'keydown'].forEach(ev => document.addEventListener(ev, unlockAudio, { once: true, capture: true }));
+['pointerup', 'keydown'].forEach(ev => document.addEventListener(ev, () => { if (ctx) bgAnchorPlay(); }, { capture: true }));
 const wake = { lock: null, busy: false, retryAt: 0 };
 async function wakeUpdate() {
   if (!('wakeLock' in navigator) || wake.busy) return;
@@ -2833,11 +2862,22 @@ document.addEventListener('keydown', e => {
 let lastFrame = performance.now();
 function frame() {
   const t = performance.now(), dt = Math.min(0.1, (t - lastFrame) / 1000); lastFrame = t;
+  if (document.hidden) { requestAnimationFrame(frame); return; }
   meters(); autoView();
   decks.forEach(d => { if (ctx) { d.scratchTick(dt); if (d.ptr && d.ptr.mode === 'bend' && t - d.ptr.t > 80) d.setBend(0); } d.draw(); });
   requestAnimationFrame(frame);
 }
-setInterval(() => { try { automixTick(); if (signature() !== plSig) renderPlaylist(); } catch (err) { console.error(err); } }, 50);
+// automix runs off a Worker timer: page timers get throttled to once a second or slower when the screen is off, workers don't.
+// The transition itself is scheduled on the AudioContext clock, so this only has to notice when it's time to start the next one.
+let mixBusy = false, mixLast = 0;
+function mixTick() {
+  // throttled timers can deliver a burst of queued ticks at once: run at most one per 25 ms and never re-enter
+  const t = performance.now(); if (mixBusy || t - mixLast < 25) return; mixBusy = true; mixLast = t;
+  try { automixTick(); if (!document.hidden && signature() !== plSig) renderPlaylist(); } catch (err) { console.error(err); } finally { mixBusy = false; } }
+try {
+  const w = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 50)'], { type: 'text/javascript' })));
+  w.onmessage = mixTick;
+} catch (e) { setInterval(mixTick, 50); }
 initFilters(); initPresets(); klUI(); renderPlaylist(); requestAnimationFrame(frame);
 </script>
 </body>
