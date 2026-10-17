@@ -13,6 +13,8 @@
 body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.3 "Segoe UI",system-ui,sans-serif;min-width:1200px}
 header{display:flex;align-items:center;gap:12px;padding:8px 18px;border-bottom:1px solid var(--line)}
 h1{font-size:22px;margin:0 6px 0 0;letter-spacing:1px;white-space:nowrap}
+.avver{text-align:center;font-size:13px;opacity:.85;margin:4px 0}
+.ver{font-size:13px;font-weight:700;letter-spacing:0;padding:2px 7px;border-radius:9px;background:#22d3ee;color:#04121a;vertical-align:middle}
 button,select{background:#2a2f3a;color:var(--txt);border:1px solid #3a4150;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
 button:hover{background:#343a47}
 button.on{background:var(--ok);color:#06210f;border-color:var(--ok)}
@@ -178,7 +180,7 @@ body[data-view=auto] #trpanel{display:none}
 </head>
 <body>
 <header>
-  <h1>DANIEL DJ</h1>
+  <h1>DANIEL DJ <span class="ver" id="appver">v13</span></h1>
   <button id="automix" title="M">AI AUTOMIX: OFF</button>
   <label>Genre <select id="genre" title="Sets mix length, transition moves, FX intensity and EQ style">
     <option value="custom">Custom</option><option value="house">House / Techno</option><option value="hiphop">Hip-Hop / R&amp;B</option><option value="edm">EDM / Big Room</option><option value="dnb">Drum &amp; Bass</option><option value="pop">Pop / Top 40</option><option value="latin">Latin / Reggaeton</option><option value="chill">Chill / Lo-fi</option></select></label>
@@ -192,7 +194,7 @@ body[data-view=auto] #trpanel{display:none}
 <div id="autoview">
   <div class="avcard"><small>NOW PLAYING</small><div class="avt" id="avNow">Nothing playing</div><div class="avm" id="avNowM"></div><div class="avbar"><i id="avProg"></i></div></div>
   <div class="avcard"><small>UP NEXT</small><div class="avt" id="avNext">—</div><div class="avm" id="avNextM"></div>
-    <div class="avbtns"><button id="avPause" title="Pause / resume everything (Space)">❚❚ Pause</button><button id="avAuto">AI AUTOMIX: OFF</button><button id="avMix" title="Mix to the next song now (Quick Mix)">⏭ Mix now</button><button id="avKL" class="on" title="Key lock: tempo changes keep the original pitch">Key lock: ON</button></div></div>
+    <div class="avver">Daniel DJ <b class="ver">v13</b></div><div class="avbtns"><button id="avPause" title="Pause / resume everything (Space)">❚❚ Pause</button><button id="avAuto">AI AUTOMIX: OFF</button><button id="avMix" title="Mix to the next song now (Quick Mix)">⏭ Mix now</button><button id="avKL" class="on" title="Key lock: tempo changes keep the original pitch">Key lock: ON</button></div></div>
   <div class="avcard avtr"><small>TRANSITIONS</small><div class="trhead"><label>Next transition <select class="nexttr" title="Queue a transition for automix's next mix"></select></label><span class="trnote"></span></div><div class="avchips" id="avchips"></div></div>
 </div>
 <div class="decks"><div class="deck" id="deckA"></div><div class="deck" id="deckB"></div></div>
@@ -1211,7 +1213,7 @@ function audio() {
     comp.threshold.value = -12; comp.knee.value = 8; comp.ratio.value = 3; comp.attack.value = 0.01; comp.release.value = 0.25;
     limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -2; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.002; limiter.release.value = 0.1;
-    master.connect(comp); comp.connect(limiter); limiter.connect(ctx.destination); bgAnchorSetup();
+    master.connect(comp); comp.connect(limiter); limiter.connect(ctx.destination);
     // generated reverb impulse: 2.8 s of decaying stereo noise
     const len = Math.floor(ctx.sampleRate * 2.8); reverbIR = ctx.createBuffer(2, len, ctx.sampleRate);
     for (let c = 0; c < 2; c++) { const d = reverbIR.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
@@ -1262,7 +1264,7 @@ class Deck {
     this.bpm = 0; this.beat0 = 0; this.fresh = false; this.peaks = null; this.token = 0; this.brk = null;
     this.item = null; this.info = null; this.window = null; this.rolling = false;
     this.cues = new Array(8).fill(null); this.loop = null;
-    this.manual = false; this.glide = null; this.sliding = false;   // manual = you set this deck's tempo; glide = easing back to 1.0x after automix
+    this.manual = false; this.glide = null; this.ramp = null; this.sliding = false;   // manual = you set this deck's tempo; glide = easing back to 1.0x after automix
     this.bend = 0; this.scr = null; this.ptr = null; this.pre = null; this._rev = null; this.platterAngle = 0;
     this.fx = {}; for (const k of ['filter', 'echo', 'reverb', 'flanger']) this.fx[k] = { on: false, amt: FX_DEFAULTS[k] };
     this.$('.load').onclick = () => this.$('.file').click();
@@ -1416,7 +1418,12 @@ class Deck {
     return this.lin(now);
   }
   lin(t) {   // linear playback position at context time t, wrapped inside an active loop
-    let p = this.off + Math.max(0, t - this.t0) * this.effRate; const L = this.loop;
+    let p; const R = this.ramp;
+    if (R && t > R.t0) {   // scheduled ramp r0 -> 1.0 over [t0, t1] (playbackRate automation), integrated exactly
+      const u = Math.min(t, R.t1) - R.t0, len = R.t1 - R.t0;
+      p = this.off + Math.max(0, R.t0 - this.t0) * R.r0 + R.r0 * u + (1 - R.r0) * u * u / (2 * len) + Math.max(0, t - R.t1);
+    } else p = this.off + Math.max(0, t - this.t0) * this.effRate;
+    const L = this.loop;
     if (L && p >= L.end) p = L.start + (p - L.start) % (L.end - L.start);
     return p;
   }
@@ -1426,10 +1433,28 @@ class Deck {
       this.src = null; this.playing = false;
       if (this.brk) { this.off = clamp(this.brk.p0 + this.brk.r0 * this.brk.len / 2, 0, this.buffer.duration); this.brk = null; }
       else { this.off = this.buffer.duration; this.fresh = false; }
+      if (document.hidden) bgKick(2);   // screen off: the end of a song (an audio event) drives the next step, not a timer
     };
   }
+  // tempo ramp scheduled on the audio clock (screen-off automix): ease back to 1.0x without any timer ticks
+  scheduleRamp(at, len) {
+    if (this.manual || !this.src || this.brk || Math.abs(this.rate - 1) < 1e-4 || this.bend) return;
+    at = Math.max(at, ctx.currentTime); if (at < this.t0) return;
+    this.ramp = { t0: at, t1: at + len, r0: this.rate };
+    const pr = this.src.playbackRate; pr.cancelScheduledValues(ctx.currentTime); pr.setValueAtTime(this.rate, ctx.currentTime); pr.setValueAtTime(this.rate, at); pr.linearRampToValueAtTime(1, at + len);
+    if (this.klP && this.klOn) { const k = this.klP; k.cancelScheduledValues(ctx.currentTime); k.setValueAtTime(1 / this.rate, ctx.currentTime); k.setValueAtTime(1 / this.rate, at); k.linearRampToValueAtTime(1, at + len); }
+  }
+  rampRate(t) { const R = this.ramp; return !R || t <= R.t0 ? (R ? R.r0 : this.rate) : t >= R.t1 ? 1 : R.r0 + (1 - R.r0) * (t - R.t0) / (R.t1 - R.t0); }
+  dropRamp() {   // bake a scheduled ramp into plain position maths (before anything else touches the rate)
+    const R = this.ramp; if (!R) return; const now = ctx.currentTime;
+    if (this.playing) { this.off = this.lin(now); this.t0 = now; }
+    this.ramp = null; this.rate = this.rampRate.call({ ramp: R, rate: R.r0 }, now);
+    if (this.src) { const pr = this.src.playbackRate; pr.cancelScheduledValues(now); pr.setValueAtTime(this.effRate, now); }
+    this.klPitch(true); if (!this.sliding) this.$('.tempo').value = Math.round((this.rate - 1) * 1000) / 10;
+  }
+  settleRamp(now) { if (this.ramp && now >= this.ramp.t1) this.dropRamp(); }
   play(when) {
-    if (!this.buffer) return; audio(); this.stopSrc(); this.brk = null; this.rolling = false;
+    if (!this.buffer) return; audio(); this.dropRamp(); this.stopSrc(); this.brk = null; this.rolling = false;
     const s = ctx.createBufferSource(); s.buffer = this.buffer; s.playbackRate.value = this.effRate; s.connect(this.trim);
     when = Math.max(when || 0, ctx.currentTime);
     const L = this.loop;
@@ -1443,7 +1468,7 @@ class Deck {
   stopSrc() {
     for (const k of ['src', 'pre']) if (this[k]) { const s = this[k]; this[k] = null; try { s.stop(); } catch (e) {} }
   }
-  pause() { if (!this.playing) return; this.off = this.pos(); this.stopSrc(); this.playing = false; this.brk = null; this.rolling = false; this.bend = 0; }
+  pause() { this.dropRamp(); if (!this.playing) return; this.off = this.pos(); this.stopSrc(); this.playing = false; this.brk = null; this.rolling = false; this.bend = 0; }
   // reversed copy of the song, made on first use (scratching backwards, backspins)
   get rev() {
     if (!this._rev || this._revOf !== this.buffer) {
@@ -1454,12 +1479,14 @@ class Deck {
     return this._rev;
   }
   setBend(b) {   // rim nudge: temporary speed change that moves the beat without touching the tempo slider
+    this.dropRamp();
     if (!this.playing || this.brk) { this.bend = 0; return; }
     this.off = this.pos(); this.t0 = Math.max(ctx.currentTime, this.t0); this.bend = b;
     this.src.playbackRate.setTargetAtTime(this.effRate, ctx.currentTime, 0.015); this.klPitch(false, 0.015);
   }
   // true reverse spin-out: switch to the reversed copy at 3x speed and decelerate to a stop over `len` seconds
   backspin(len, when) {
+    this.dropRamp();
     if (!this.playing || this.brk || !this.src) return;
     when = Math.max(when || 0, ctx.currentTime + 0.01);
     const p0 = this.lin(when), r0 = 3; this.loop = null;
@@ -1561,6 +1588,7 @@ class Deck {
     this.applyLoop(start, beats);
   }
   applyLoop(start, beats) {
+    this.dropRamp();
     const end = Math.min(start + beats * this.beatLen, this.buffer.duration), len = end - start;
     if (start < 0 || len <= 0.01) return;
     const pos = this.pos(); this.loop = { start, end, beats };
@@ -1572,6 +1600,7 @@ class Deck {
   }
   resizeLoop(f) { if (this.loop) this.applyLoop(this.loop.start, clamp(this.loop.beats * f, 1 / 32, 64)); }
   exitLoop() {
+    this.dropRamp();
     if (!this.loop) return;
     if (this.playing && this.src) { this.off = this.pos(); this.t0 = Math.max(ctx.currentTime, this.t0); this.src.loop = false; }
     this.loop = null; this.padsUI();
@@ -1595,6 +1624,7 @@ class Deck {
   }
   // tape stop: slow the record to a halt over `len` seconds starting at `when`, then pause there
   brake(len, when) {
+    this.dropRamp();
     if (!this.playing || this.brk) return;
     when = Math.max(when || 0, ctx.currentTime);
     const p0 = this.lin(when); this.loop = null; this.src.loop = false;
@@ -1608,6 +1638,7 @@ class Deck {
   }
   // change the real playbackRate, re-anchoring the position maths so pos() stays exact
   applyRate(r) {
+    this.dropRamp();
     if (this.playing && !this.brk && this.src) { this.off = this.pos(); this.t0 = Math.max(ctx.currentTime, this.t0); this.rate = r; this.src.playbackRate.setValueAtTime(this.effRate, ctx.currentTime); }
     this.rate = r; if (!this.brk) this.klPitch();
   }
@@ -2130,14 +2161,7 @@ function planFX(out, inc, picks, T0, dur, bar, beat, from, to, tail = 2 * bar, i
   // at the exit beat: cut the dry signal and stop feeding the effect, so only its tail rings out
   const exitAt = (send, tc) => plan.events.push({ t: tx - 0.2, fn: () => { out.dry.gain.setTargetAtTime(0, tx, tc); send.setTargetAtTime(0, tx, 0.01); } });
   // sample-accurate crossfader moves for cuts and chops: list of [time, crossfader value]
-  const xCuts = list => {
-    plan.xOwnFrom = list[0][0] - 0.3;
-    plan.events.push({ t: list[0][0] - 0.3, fn: () => {
-      let prev = decks.map(d => d.xgain.gain.value);
-      decks.forEach(d => d.xgain.gain.cancelScheduledValues(ctx.currentTime));
-      for (const [t, v] of list) { const g = xGains(v); decks.forEach((d, i) => { d.xgain.gain.setValueAtTime(prev[i], t); d.xgain.gain.linearRampToValueAtTime(g[i], t + 0.004); }); prev = g; }
-    } });
-  };
+  const xCuts = list => { plan.xOwnFrom = list[0][0] - 0.3; plan.xcut = list; };
   for (const p of picks) {
     const r = RECIPES[p];
     if (r.exit && !r.cut) plan.xkeys = [[T0, from], [tx, 0], [T1, to]];
@@ -2220,7 +2244,7 @@ function planFX(out, inc, picks, T0, dur, bar, beat, from, to, tail = 2 * bar, i
     if (p === 'bassDrop') {
       // both basses off for the last bar, then the new bass slams in on the 1
       plan.events.push({ t: T1 - bar - 0.25, fn: () => out.lowAt(-40, T1 - bar, 0.01) });
-      plan.events.push({ t: T1 - bar + 0.02, fn: () => out.eqUI('low', -40) });
+      plan.events.push({ t: T1 - bar + 0.02, ui: true, fn: () => out.eqUI('low', -40) });
       plan.events.push({ t: T1 - 0.25, fn: () => inc.lowAt(0, T1, 0.004) });
       plan.bassDrop = T1 - bar;
     }
@@ -2234,6 +2258,21 @@ function planFX(out, inc, picks, T0, dur, bar, beat, from, to, tail = 2 * bar, i
   }
   plan.tx = tx;
   return plan;
+}
+// the crossfader for a whole transition, scheduled on the AudioContext clock the moment the move is decided:
+// equal-power curve sampled every 50 ms up to the first cut, then sample-exact cuts. Ticks only move the slider on screen.
+function scheduleXF(plan) {
+  const now = ctx.currentTime, keys = plan.xkeys, gs = decks.map(d => d.xgain.gain);
+  gs.forEach(g => { const v = g.value; g.cancelScheduledValues(now); g.setValueAtTime(v, now); });
+  const t0 = Math.max(now, keys[0][0]), cut0 = plan.xcut ? plan.xcut[0][0] : Infinity, tEnd = Math.min(keys[keys.length - 1][0], cut0 - 0.006);
+  const put = (t, v, ramp) => { const g = xGains(v); gs.forEach((p, i) => ramp ? p.linearRampToValueAtTime(g[i], t) : p.setValueAtTime(g[i], t)); };
+  put(t0, keyAt(keys, t0), true);
+  for (let t = t0 + 0.05; t < tEnd; t += 0.05) put(t, keyAt(keys, t), true);
+  if (tEnd > t0) put(tEnd, keyAt(keys, tEnd), true);
+  if (plan.xcut) {
+    let prev = xGains(keyAt(keys, Math.min(tEnd, cut0 - 0.006)));
+    for (const [t, v] of plan.xcut) { const g = xGains(v); gs.forEach((p, i) => { p.setValueAtTime(prev[i], Math.max(now, t)); p.linearRampToValueAtTime(g[i], Math.max(now, t) + 0.004); }); prev = g; }
+  }
 }
 const fxLive = { n: 0 };   // synth FX sources still running (riser)
 let _noise = null;
@@ -2291,13 +2330,14 @@ function klUI() {
 function endFX(cancelled) {  // put both decks' effects back exactly as they were before the transition
   const { out, in: inc, snapOut, snapIn } = mix;
   // a cancelled brake or loop roll jumps back to where the song would be now
-  if (cancelled && (out.brk || out.rolling) && out.playing) { const p = out.pos(); out.pause(); out.off = p; out.play(); }
+  if (cancelled) inc.dropRamp();
+  if (cancelled && (out.brk || out.rolling || mix.bgMode) && out.playing) { const p = out.pos(); out.pause(); out.off = p; out.play(); }
   const plan = mix.plan;
   if (plan && cancelled) {
     plan.extra.forEach(s => { try { s.stop(); } catch (e) {} });
     if (inc.playing && inc.t0 > ctx.currentTime) { const at = inc.off; inc.pause(); inc.off = at; }   // cut move cancelled before its drop
   }
-  if (plan && plan.xOwnFrom < Infinity) { decks.forEach(d => d.xgain.gain.cancelScheduledValues(ctx.currentTime)); applyXF(); }
+  if (plan) { decks.forEach(d => { const g = d.xgain.gain, v = g.value; g.cancelScheduledValues(ctx.currentTime); g.setValueAtTime(v, ctx.currentTime); }); applyXF(); }
   out.restoreFX(snapOut); inc.restoreFX(snapIn);
 }
 
@@ -2323,7 +2363,7 @@ function cancelMix(quiet) {  // a hand on the crossfader only cancels a transiti
 async function loadItemTo(deck, it) {
   if (mix.loading) return;
   mix.loading = true;
-  try { await deck.load(it.file, it); if (deck.item !== it) it.failed = it.played = true; } finally { mix.loading = false; renderPlaylist(); }
+  try { await deck.load(it.file, it); if (deck.item !== it) it.failed = it.played = true; } finally { mix.loading = false; renderPlaylist(); if (document.hidden) bgKick(1); }
 }
 // automix play window: hot cue 1 = mix-in point, hot cue 4 = mix-out point (they override the play length)
 const autoWindow = d => {
@@ -2339,7 +2379,7 @@ const autoWindow = d => {
 function automixTick() {
   if (!ctx) return;
   if (freeze.on) return status(mix.phase === 'mixing' ? 'Paused mid-transition. Press Resume (Space) to carry on.' : 'Paused. Press Resume (Space) to carry on.');   // clock is frozen: nothing to do
-  decks.forEach(d => d.glideTick(ctx.currentTime));
+  decks.forEach(d => { d.settleRamp(ctx.currentTime); d.glideTick(ctx.currentTime); });
   if (mix.phase === 'mixing') return mixingTick(ctx.currentTime);   // runs for Quick Mix even when automix is off
   if (!mix.on) return;
   const [A, B] = decks, now = ctx.currentTime;
@@ -2371,14 +2411,15 @@ function automixTick() {
     const want = nextItem();
     if (want && want !== inc.item && lead > 8) { mix.phase = 'idle'; return; }   // playlist was reordered: load the new next song
     status(`Automix: next up "${inc.$('.name').textContent}" in ${fmt(lead)} · ${planLabel(P, [])}`);
-    if (lead > 1 && !P.late) return;
+    const commitNow = document.hidden && !out.ramp;   // screen off: put the whole next move on the audio clock right away
+    if (lead > 1 && !P.late && !commitNow) return;
     const q = presetQ.id;
     if (q) {   // a queued preset replaces the automatic choice (it still ends on the planned phrase line)
       let R = presetPlan(out, inc, q, P.endPt, P.rise);
       if (R.T0track < pos + 0.15 * out.rate) R = presetPlan(out, inc, q, null, P.rise);
       const lq = (R.T0track - pos) / out.rate;
       status(`Automix: next up "${inc.$('.name').textContent}" in ${fmt(lq)} · queued ${R.label}`);
-      if (lq > 1) return;
+      if (lq > 1 && !commitNow) return;
       setQueued('');
       return beginMix(out, inc, R.T0track, R.L, R.picks, { vibe: !!mix.vibe, incStart: R.incStart, rise: R.rise, label: R.label, preset: R.id, plan: { ...P, kind: 'preset' } });
     }
@@ -2488,7 +2529,7 @@ function audioLag(out, inc, W) {
 // once per bar during a beat-matched blend: measure the phase error and nudge the incoming speed (max ±0.5%, smoothed) to cancel it
 function lockTick(now) {
   const { out, in: inc } = mix;
-  if (!mix.lock || now > mix.lockUntil || !inc.playing || !out.playing || inc.t0 > now - 0.05 || out.brk || inc.brk || out.rolling || out.scr || inc.scr || inc.ptr) return;
+  if (document.hidden || !mix.lock || now > mix.lockUntil || !inc.playing || !out.playing || inc.t0 > now - 0.05 || out.brk || inc.brk || out.rolling || out.scr || inc.scr || inc.ptr) return;
   const ob = 60 / out.bpm, k = Math.floor((out.pos() - out.beat0) / (4 * ob));
   if (k === mix.lockBar) return; mix.lockBar = k;
   const T = 4 * ob / out.effRate, ib = 60 / inc.bpm;
@@ -2505,6 +2546,10 @@ function lockTick(now) {
 function beginMix(out, inc, T0track, mixBars, picks, opts = {}) {
   // only one transition at a time: a late or doubled timer tick (phone screen off) must never start a second one on top
   if (mix.phase === 'mixing' || inc.playing || !out.playing) return;
+  // screen off: page timers can stall for minutes, so only moves that are pure audio-clock automation, no drift-lock nudges,
+  // every event scheduled now, the outgoing deck's stop and the tempo ramp back scheduled too. Nothing needs a tick mid-blend.
+  const bgMode = !!document.hidden;
+  if (bgMode) { picks = picks.filter(p => BG_SAFE.has(p)); out.dropRamp(); }
   const now = ctx.currentTime, beat = out.bpm ? 60 / out.bpm : 0.5, bar = 4 * beat, pos = out.pos(), win = out.window;
   // beat-match only when the tempos are within 8% (half/double time counts); otherwise a plain crossfade at the song's own tempo.
   // a deck whose tempo you set by hand is never retimed. The outgoing deck stops any glide so the match target holds still.
@@ -2543,13 +2588,21 @@ function beginMix(out, inc, T0track, mixBars, picks, opts = {}) {
   if (opts.vibe) mix.vibe = false; mix.last.vibe = !!opts.vibe;
   mix.last.preset = opts.preset || null;
   fxLabel.textContent = opts.label ? opts.label + (win ? ' · short cut' : '') : (opts.vibe ? 'Vibe change: ' : opts.quick ? 'Quick Mix: ' : 'Automix: ') + (picks.length ? picks.map(p => RECIPES[p].label).join(' + ') : (fxAuto.on ? 'none' : 'off')) + (win ? ' · short cut' : '');
-  Object.assign(mix, { phase: 'mixing', start: when, dur: mixDur, swapped: false, plan });
+  Object.assign(mix, { phase: 'mixing', start: when, dur: mixDur, swapped: false, plan, bgMode });
+  scheduleXF(plan);
+  if (bgMode) {
+    mix.lock = false; mix.last.lock = false;
+    for (const e of plan.events) if (!e.ui) { e.done = true; e.fn(); }
+    if (out.src && !out.brk) try { out.src.stop(when + mixDur + 0.02); } catch (e) {}
+    inc.scheduleRamp(when + mixDur, 6);
+  }
 }
+const BG_SAFE = new Set(['brakeStop', 'tapeDrop', 'slamCut', 'bassDrop', 'doubleDrop', 'echoFreeze', 'stutter']);
 function mixingTick(now) {
   const { out, in: inc } = mix, p = clamp((now - mix.start) / mix.dur, 0, 1);
   status(`${mix.quick ? 'Quick Mix' : 'Automix'}: mixing into ${inc.id}… ${Math.round(p * 100)}%`);
   const xv = keyAt(mix.plan.xkeys, now);
-  if (now >= mix.plan.xOwnFrom) xf.value = xv; else userlessXF(xv);   // cuts/chops: audio is pre-scheduled, slider only follows
+  xf.value = xv;   // the audio is pre-scheduled (scheduleXF); the slider only follows
   if (mix.swapAt != null && !mix.swapped && now >= mix.swapAt + mix.swapRamp) { mix.swapped = true; inc.eqUI('low', 0); out.eqUI('low', -40); }   // audio was scheduled on the beat
   lockTick(now);
   runPlan(mix.plan, now);
@@ -2557,7 +2610,7 @@ function mixingTick(now) {
     out.pause(); out.fresh = false; out.window = null; out.lowClear(); inc.lowClear(); out.setEQ('low', 0); inc.setEQ('low', 0); endFX(false); mix.phase = 'idle'; mix.last.doneCtx = now;
     if (inc.bend && !inc.ptr) { const r = inc.effRate; inc.bend = 0; inc.applyRate(r); }   // fold the drift nudge into the tempo (no audible step)
     mix.last.lockLog = mix.lockLog;
-    inc.startGlide(6);   // blend done: ease the live song back to its own tempo (skipped if you set its tempo)
+    if (!inc.ramp) inc.startGlide(6);   // blend done: ease the live song back to its own tempo (skipped if you set its tempo)
     if (!mix.on) status(`Quick Mix done. Deck ${inc.id} is live.`);
   }
 }
@@ -2757,24 +2810,30 @@ function autoView() {
 // ---------- background playback (screen off / phone locked) ----------
 // On phones the mix is also routed into a real <audio> element. Android treats that as media playback (like a music app),
 // so it keeps the page running at full priority, shows lock-screen controls, and doesn't starve the audio thread.
-const bg = { el: null, dest: null, on: false };
-function bgAnchorSetup() {
-  if (!matchMedia('(pointer: coarse)').matches || !ctx.createMediaStreamDestination) return;
-  try {
-    bg.dest = ctx.createMediaStreamDestination(); limiter.connect(bg.dest);
-    bg.el = document.createElement('audio'); bg.el.setAttribute('playsinline', ''); bg.el.srcObject = bg.dest.stream; bg.el.muted = true;
-    document.body.appendChild(bg.el);
-    bg.el.addEventListener('pause', () => { if (bg.on && !freeze.on) pauseAll(); });   // Android paused us (call, other app took audio): pause the mix too
-  } catch (e) { bg.el = null; }
+const APP_VERSION = 'v13';
+// The mix plays straight to the speakers through Web Audio (no re-routing, no doubled output).
+// Android only shows lock-screen controls and treats the page as a media app while a real <audio> element is playing,
+// so a looping, inaudible WAV (8 s of 1-bit dither) plays alongside the mix as the media-session anchor.
+const bg = { el: null, on: false, self: false };
+function silentWav(secs = 8, sr = 8000) {
+  const n = secs * sr, b = new ArrayBuffer(44 + n * 2), v = new DataView(b), w = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, (i & 1) ? 1 : -1, true);
+  return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
 }
-function bgAnchorPlay() {   // called from a tap; once the element plays, move the speaker output onto it (no doubled sound)
-  if (!bg.el || bg.on) return;
-  bg.el.play().then(() => { if (bg.on) return; bg.on = true; bg.el.muted = false; try { limiter.disconnect(ctx.destination); } catch (e) {} }).catch(() => {});
-}
+try {
+  bg.el = document.createElement('audio'); bg.el.setAttribute('playsinline', ''); bg.el.loop = true; bg.el.preload = 'auto'; bg.el.src = silentWav(); bg.el.id = 'mediaAnchor';
+  document.body.appendChild(bg.el);
+  bg.el.addEventListener('playing', () => { bg.on = true; msUpdate(true); });
+  bg.el.addEventListener('pause', () => { bg.on = false; if (bg.self) { bg.self = false; return; } if (!freeze.on && decks.some(d => d.playing)) pauseAll(); });   // Android paused us (call, other app took audio focus)
+} catch (e) { bg.el = null; }
+function bgAnchorPlay() { if (bg.el && bg.el.paused) bg.el.play().then(() => msUpdate(true)).catch(() => {}); }
+function bgAnchorPause() { if (bg.el && !bg.el.paused) { bg.self = true; bg.el.pause(); } }
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) return;
+  if (document.hidden) { mixLast = 0; mixTick(); return; }   // screen going off: commit the next transition onto the audio clock now
   if (ctx && ctx.state !== 'running' && !freeze.on) ctx.resume().catch(() => {});
-  if (bg.on && bg.el.paused && !freeze.on) bg.el.play().catch(() => {});
+  if (!freeze.on && decks.some(d => d.playing)) bgAnchorPlay();
   lastFrame = performance.now();
   if (ctx && mix.phase === 'mixing') { mix.lockPrev = null; mix.lockR = 0; }   // recompute from the AudioContext clock, don't replay missed ticks
   mixLast = 0; mixTick();
@@ -2787,13 +2846,13 @@ document.addEventListener('visibilitychange', () => {
 const freeze = { on: false };
 function pauseAll() {
   if (!ctx || freeze.on || !decks.some(d => d.playing)) return;
-  freeze.on = true; document.body.classList.add('frozen'); ctx.suspend(); if (bg.on) bg.el.pause();
+  freeze.on = true; document.body.classList.add('frozen'); ctx.suspend(); bgAnchorPause();
   status(mix.phase === 'mixing' ? 'Paused mid-transition. Resume carries on from here.' : 'Paused. Automix ' + (mix.on ? 'stays on.' : 'is off.'));
   freezeUI();
 }
 function resumeAll() {
   if (!freeze.on) return; freeze.on = false; document.body.classList.remove('frozen');
-  if (ctx) ctx.resume(); if (bg.on) bg.el.play().catch(() => {}); status(mix.on ? 'Resumed. Automix is on.' : 'Resumed.'); freezeUI();
+  if (ctx) ctx.resume(); bgAnchorPlay(); status(mix.on ? 'Resumed. Automix is on.' : 'Resumed.'); freezeUI();
 }
 // Pause button / Space in the automix view: pause, resume, or start automix when nothing is playing
 function pauseToggle() {
@@ -2805,20 +2864,27 @@ function freezeUI() {
   const b = document.getElementById('avPause'), playing = decks.some(d => d.playing);
   const t = freeze.on ? '▶ Resume' : playing ? '❚❚ Pause' : '▶ Start automix';
   if (b.textContent !== t) b.textContent = t;
-  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = freeze.on ? 'paused' : playing ? 'playing' : 'none';
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = freeze.on ? 'paused' : playing ? 'playing' : 'paused';
 }
 document.getElementById('avPause').onclick = pauseToggle; freezeUI();
 // lock screen / notification / headphone controls (where the browser offers them for Web Audio)
 if ('mediaSession' in navigator) {
   const ms = navigator.mediaSession, h = (a, f) => { try { ms.setActionHandler(a, f); } catch (e) {} };
   h('play', () => freeze.on ? resumeAll() : pauseToggle()); h('pause', pauseAll); h('nexttrack', () => quickMix());
-  let lastTitle = '';
-  setInterval(() => {
-    freezeUI();
-    const live = decks.find(d => d.playing && d.item) || decks.find(d => d.playing), title = live ? live.$('.name').textContent : '';
-    if (title !== lastTitle && window.MediaMetadata) { lastTitle = title; ms.metadata = new MediaMetadata({ title: title || 'Daniel DJ', artist: 'Daniel DJ', album: mix.on ? 'AI Automix' : '', artwork: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }, { src: 'icon-512.png', sizes: '512x512', type: 'image/png' }] }); }
-  }, 1000);
-} else setInterval(freezeUI, 1000);
+}
+let msTitle = null;
+function msUpdate(force) {
+  if (!('mediaSession' in navigator) || !ctx) return;
+  const ms = navigator.mediaSession, on = decks.filter(d => d.playing && d.t0 <= ctx.currentTime + 0.05), live = on.length > 1 ? (+xf.value <= 0 ? decks[0] : decks[1]) : on[0], title = live ? live.$('.name').textContent : 'Daniel DJ';
+  if ((force || title !== msTitle) && window.MediaMetadata) { msTitle = title; ms.metadata = new MediaMetadata({ title, artist: 'Daniel DJ ' + APP_VERSION, album: mix.on ? 'AI Automix' : 'Daniel DJ', artwork: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }, { src: 'icon-512.png', sizes: '512x512', type: 'image/png' }] }); }
+  ms.playbackState = freeze.on ? 'paused' : decks.some(d => d.playing) ? 'playing' : 'paused';
+}
+setInterval(() => {
+  freezeUI();
+  const playing = decks.some(d => d.playing);
+  if (playing && !freeze.on) bgAnchorPlay(); else if (!playing && !freeze.on && !mix.on) bgAnchorPause();
+  msUpdate();
+}, 1000);
 function unlockAudio() {
   try {
     const c = audio(), s = c.createBufferSource(); s.buffer = c.createBuffer(1, 1, 22050); s.connect(c.destination); s.start(0);
@@ -2826,7 +2892,7 @@ function unlockAudio() {
   } catch (e) {}
 }
 ['pointerdown', 'touchend', 'keydown'].forEach(ev => document.addEventListener(ev, unlockAudio, { once: true, capture: true }));
-['pointerup', 'keydown'].forEach(ev => document.addEventListener(ev, () => { if (ctx) bgAnchorPlay(); }, { capture: true }));
+['pointerup', 'keydown'].forEach(ev => document.addEventListener(ev, () => { if (ctx && !freeze.on) bgAnchorPlay(); }, { capture: true }));
 const wake = { lock: null, busy: false, retryAt: 0 };
 async function wakeUpdate() {
   if (!('wakeLock' in navigator) || wake.busy) return;
@@ -2842,7 +2908,13 @@ setInterval(wakeUpdate, 1000);
 if (/^https?:$/.test(location.protocol)) {   // only when hosted (a double-clicked file can't use these)
   const add = (rel, href) => { const l = document.createElement('link'); l.rel = rel; l.href = href; document.head.appendChild(l); };
   add('manifest', 'manifest.webmanifest'); add('apple-touch-icon', 'icon-192.png'); add('icon', 'icon-192.png');
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+    reg.update().catch(() => {});
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+  // a new version took over: reload straight away if nothing is playing, so the version label is always current
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (reloaded || decks.some(d => d.playing)) return; reloaded = true; location.reload(); });
 }
 
 // ---------- keyboard ----------
@@ -2870,13 +2942,15 @@ function frame() {
 // automix runs off a Worker timer: page timers get throttled to once a second or slower when the screen is off, workers don't.
 // The transition itself is scheduled on the AudioContext clock, so this only has to notice when it's time to start the next one.
 let mixBusy = false, mixLast = 0;
+// run automix steps right now (finish a blend -> load the next song -> schedule its move), from audio / decode events
+function bgKick(n) { setTimeout(() => { for (let i = 0; i < n; i++) { mixLast = 0; mixTick(); } }, 0); }
 function mixTick() {
   // throttled timers can deliver a burst of queued ticks at once: run at most one per 25 ms and never re-enter
   const t = performance.now(); if (mixBusy || t - mixLast < 25) return; mixBusy = true; mixLast = t;
   try { automixTick(); if (!document.hidden && signature() !== plSig) renderPlaylist(); } catch (err) { console.error(err); } finally { mixBusy = false; } }
 try {
   const w = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 50)'], { type: 'text/javascript' })));
-  w.onmessage = mixTick;
+  w.onmessage = mixTick; window.mixWorker = w;
 } catch (e) { setInterval(mixTick, 50); }
 initFilters(); initPresets(); klUI(); renderPlaylist(); requestAnimationFrame(frame);
 </script>
